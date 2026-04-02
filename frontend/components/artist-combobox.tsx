@@ -99,9 +99,9 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
             {value ? (
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
-                  {value.imageURL ? (
+                  {value.imageUrl ? (
                     <img
-                      src={value.imageURL}
+                      src={value.imageUrl}
                       alt={value.name}
                       className="h-9 w-9 rounded-full object-cover"
                     />
@@ -141,9 +141,9 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
                     >
                       <div className="flex items-center gap-3">
                         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary">
-                          {artist.imageURL ? (
+                          {artist.imageUrl ? (
                             <img
-                              src={artist.imageURL}
+                              src={artist.imageUrl}
                               alt={artist.name}
                               className="h-8 w-8 rounded-full object-cover"
                             />
