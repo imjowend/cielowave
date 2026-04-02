@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -197,22 +198,52 @@ func (c *TidalClient) getToken() (string, error) {
 }
 
 func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
-	token, err := c.getToken()
-	if err != nil {
-		return nil, err
+	const maxRetries = 3
+	retryDelays := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		token, err := c.getToken()
+		if err != nil {
+			return nil, err
+		}
+
+		fullURL := apiBase + path
+		log.Printf("doRequest: %s %s (attempt %d)", method, fullURL, attempt+1)
+
+		req, err := http.NewRequest(method, fullURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.api+json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			return resp, nil
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if attempt == maxRetries {
+			return nil, fmt.Errorf("tidal rate limited after %d retries: %s", maxRetries, body)
+		}
+
+		wait := retryDelays[attempt]
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil {
+				wait = time.Duration(secs) * time.Second
+			}
+		}
+		log.Printf("doRequest: 429 rate limit, waiting %v before retry %d", wait, attempt+1)
+		time.Sleep(wait)
 	}
 
-	fullURL := apiBase + path
-	log.Printf("doRequest: %s %s", method, fullURL)
-
-	req, err := http.NewRequest(method, apiBase+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.api+json")
-
-	return c.httpClient.Do(req)
+	return nil, fmt.Errorf("doRequest: unexpected exit from retry loop")
 }
 
 // GetArtistImage returns the highest-resolution profile image URL for the given artist.
@@ -358,6 +389,46 @@ func (c *TidalClient) ResolveArtistByISRC(isrc string) (*Artist, error) {
 	return nil, nil
 }
 
+// SearchArtistByName tries to find a Tidal artist by searching tracks filtered by artist name.
+// This is a best-effort fallback; returns (nil, nil) if the endpoint doesn't exist or yields no results.
+func (c *TidalClient) SearchArtistByName(name string) (*Artist, error) {
+	path := "/v2/tracks?filter[artistName]=" + url.QueryEscape(name) + "&countryCode=US&include=artists"
+	resp, err := c.doRequest("GET", path)
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+
+	var result isrcTracksResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, nil
+	}
+
+	if len(result.Data) == 0 {
+		return nil, nil
+	}
+	artistRefs := result.Data[0].Relationships.Artists.Data
+	if len(artistRefs) == 0 {
+		return nil, nil
+	}
+	artistID := artistRefs[0].ID
+
+	for _, inc := range result.Included {
+		if inc.Type == "artists" && inc.ID == artistID {
+			var attr artistAttributes
+			if err := json.Unmarshal(inc.Attributes, &attr); err != nil {
+				return nil, nil
+			}
+			return &Artist{ID: inc.ID, Name: attr.Name}, nil
+		}
+	}
+	return nil, nil
+}
+
 // GetArtistTracks returns tracks for the given artist, paginating as needed.
 // If maxTracks > 0, pagination stops once that many tracks have been collected.
 // Calls GET /v2/artists/{artistID}/relationships/tracks?countryCode=US&include=tracks
@@ -365,10 +436,15 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 	var all []Track
 	path := "/v2/artists/" + url.PathEscape(artistID) + "/relationships/tracks?countryCode=US&include=tracks&collapseBy=FINGERPRINT"
 	log.Printf("GetArtistTracks path: %s", path)
+	firstPage := true
 	for path != "" {
 		if maxTracks > 0 && len(all) >= maxTracks {
 			break
 		}
+		if !firstPage {
+			time.Sleep(200 * time.Millisecond)
+		}
+		firstPage = false
 		resp, err := c.doRequest("GET", path)
 		if err != nil {
 			return nil, err

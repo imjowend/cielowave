@@ -45,7 +45,7 @@ func (c *MusicBrainzClient) doRequest(path string) (*http.Response, error) {
 
 // SearchArtists queries MusicBrainz for artists matching the given name.
 func (c *MusicBrainzClient) SearchArtists(query string) ([]ArtistResult, error) {
-	path := "/artist/?query=" + url.QueryEscape(query) + "&fmt=json&limit=10"
+	path := "/artist/?query=" + url.QueryEscape(query) + "&fmt=json&limit=5"
 	resp, err := c.doRequest(path)
 	if err != nil {
 		return nil, err
@@ -69,30 +69,57 @@ func (c *MusicBrainzClient) SearchArtists(query string) ([]ArtistResult, error) 
 	return results, nil
 }
 
-// GetArtistISRC returns the first ISRC found among the artist's recordings.
-// Returns ("", nil) if no ISRC is available.
+// GetArtistISRC returns the first ISRC found for the artist.
+// Strategy 1: search recordings by artist MBID (query=arid:{mbid}).
+// Strategy 2 (fallback): fetch releases with embedded recordings+isrcs.
+// Returns ("", nil) if no ISRC is found via either strategy.
 func (c *MusicBrainzClient) GetArtistISRC(mbid string) (string, error) {
-	path := "/recording?artist=" + url.PathEscape(mbid) + "&inc=isrcs&fmt=json&limit=1"
-	resp, err := c.doRequest(path)
+	// Strategy 1: recording search by artist MBID
+	path1 := "/recording/?query=" + url.QueryEscape("arid:"+mbid) + "&fmt=json&limit=10"
+	resp1, err := c.doRequest(path1)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("musicbrainz recordings failed (%d): %s", resp.StatusCode, body)
-	}
-
-	var rr recordingsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rr); err != nil {
-		return "", err
-	}
-
-	for _, rec := range rr.Recordings {
-		if len(rec.ISRCs) > 0 {
-			return rec.ISRCs[0], nil
+	if resp1.StatusCode == http.StatusOK {
+		var rr recordingsResponse
+		if err := json.NewDecoder(resp1.Body).Decode(&rr); err == nil {
+			for _, rec := range rr.Recordings {
+				if len(rec.ISRCs) > 0 {
+					resp1.Body.Close()
+					return rec.ISRCs[0], nil
+				}
+			}
 		}
 	}
+	resp1.Body.Close()
+
+	// Strategy 2: browse releases with recordings+isrcs included
+	path2 := "/release/?artist=" + url.QueryEscape(mbid) + "&fmt=json&limit=1&inc=recordings+isrcs"
+	resp2, err := c.doRequest(path2)
+	if err != nil {
+		return "", nil
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		return "", nil
+	}
+
+	var lr releasesResponse
+	if err := json.NewDecoder(resp2.Body).Decode(&lr); err != nil {
+		return "", nil
+	}
+
+	for _, release := range lr.Releases {
+		for _, media := range release.Media {
+			for _, track := range media.Tracks {
+				if len(track.Recording.ISRCs) > 0 {
+					return track.Recording.ISRCs[0], nil
+				}
+			}
+		}
+	}
+
 	return "", nil
 }

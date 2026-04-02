@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"cielowave/backend/internal/musicbrainz"
 	"cielowave/backend/internal/playlist"
@@ -13,6 +16,37 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+// artistCache is an in-memory TTL cache for resolved Tidal artists.
+type artistCache struct {
+	mu      sync.Mutex
+	entries map[string]artistCacheEntry
+}
+
+type artistCacheEntry struct {
+	artist    tidal.Artist
+	expiresAt time.Time
+}
+
+func newArtistCache() *artistCache {
+	return &artistCache{entries: make(map[string]artistCacheEntry)}
+}
+
+func (ac *artistCache) get(key string) (tidal.Artist, bool) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	e, ok := ac.entries[key]
+	if !ok || time.Now().After(e.expiresAt) {
+		return tidal.Artist{}, false
+	}
+	return e.artist, true
+}
+
+func (ac *artistCache) set(key string, artist tidal.Artist) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.entries[key] = artistCacheEntry{artist: artist, expiresAt: time.Now().Add(time.Hour)}
+}
 
 func main() {
 	// Cargar variables de entorno desde .env (si existe), con fallback a variables del sistema
@@ -43,10 +77,13 @@ func main() {
 	}
 	mbClient := musicbrainz.NewMusicBrainzClient(mbUserAgent)
 
+	// Caché de artistas resueltos (1 hora TTL)
+	cache := newArtistCache()
+
 	// Configura las rutas del servidor HTTP
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
-	mux.HandleFunc("GET /api/artists", handleSearchArtists(client, mbClient))
+	mux.HandleFunc("GET /api/artists", handleSearchArtists(client, mbClient, cache))
 	mux.HandleFunc("GET /api/artists/{id}/tracks", handleGetArtistTracks(client))
 	mux.HandleFunc("POST /api/playlist", handleCreatePlaylist(client))
 
@@ -84,7 +121,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient) http.HandlerFunc {
+func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient, cache *artistCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		if q == "" {
@@ -92,59 +129,106 @@ func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient
 			return
 		}
 
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
 		mbResults, err := mb.SearchArtists(q)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "musicbrainz search failed: "+err.Error())
 			return
 		}
 
-		// Resolve Tidal IDs in parallel, max 3 concurrent goroutines.
-		const maxConcurrent = 3
+		// Resolve Tidal IDs in parallel, max 2 concurrent goroutines (respects MB rate limit).
+		const maxConcurrent = 2
+		const maxResolved = 3
 		sem := make(chan struct{}, maxConcurrent)
 
-		type result struct {
+		type resolveResult struct {
 			artist *tidal.Artist
+			idx    int
 		}
-		results := make([]result, len(mbResults))
-		var wg sync.WaitGroup
+		resultCh := make(chan resolveResult, len(mbResults))
 
 		for i, mbr := range mbResults {
-			wg.Add(1)
-			go func(i int, mbid string) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
+			go func(i int, name, mbid string) {
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					resultCh <- resolveResult{nil, i}
+					return
+				}
+
+				cacheKey := strings.ToLower(strings.TrimSpace(name))
+				if cached, ok := cache.get(cacheKey); ok {
+					log.Printf("cache hit for artist %q", name)
+					resultCh <- resolveResult{&cached, i}
+					return
+				}
 
 				isrc, err := mb.GetArtistISRC(mbid)
 				if err != nil || isrc == "" {
-					log.Printf("no ISRC for mbid %s: %v", mbid, err)
+					log.Printf("no ISRC for mbid %s (%s): %v", mbid, name, err)
+					// Fallback: search by artist name directly in Tidal
+					artist, _ := c.SearchArtistByName(name)
+					if artist != nil {
+						imgURL, _ := c.GetArtistImage(artist.ID)
+						if imgURL != "" {
+							artist.ImageURL = imgURL
+						}
+						cache.set(cacheKey, *artist)
+					}
+					resultCh <- resolveResult{artist, i}
 					return
 				}
-				artist, err := c.ResolveArtistByISRC(isrc)
-				if err != nil {
-					log.Printf("tidal resolve failed for isrc %s: %v", isrc, err)
-					return
-				}
-				results[i].artist = artist
-			}(i, mbr.MBID)
-		}
-		wg.Wait()
 
-		// Collect resolved artists, preserving MusicBrainz result order.
+				artist, err := c.ResolveArtistByISRC(isrc)
+				if err != nil || artist == nil {
+					log.Printf("tidal resolve failed for isrc %s: %v", isrc, err)
+					resultCh <- resolveResult{nil, i}
+					return
+				}
+
+				imgURL, _ := c.GetArtistImage(artist.ID)
+				if imgURL != "" {
+					artist.ImageURL = imgURL
+				}
+				cache.set(cacheKey, *artist)
+				resultCh <- resolveResult{artist, i}
+			}(i, mbr.Name, mbr.MBID)
+		}
+
+		// Collect results: stop early once maxResolved artists are found, all goroutines finish, or timeout.
+		results := make([]*tidal.Artist, len(mbResults))
+		resolved := 0
+		received := 0
+		total := len(mbResults)
+
+	collect:
+		for received < total {
+			select {
+			case res := <-resultCh:
+				received++
+				results[res.idx] = res.artist
+				if res.artist != nil {
+					resolved++
+					if resolved >= maxResolved {
+						break collect
+					}
+				}
+			case <-ctx.Done():
+				break collect
+			}
+		}
+
 		seen := make(map[string]bool)
-		artists := make([]tidal.Artist, 0, len(results))
-		for _, res := range results {
-			if res.artist == nil || seen[res.artist.ID] {
+		artists := make([]tidal.Artist, 0, maxResolved)
+		for _, a := range results {
+			if a == nil || seen[a.ID] {
 				continue
 			}
-			seen[res.artist.ID] = true
-
-			// Fetch profile image from Tidal.
-			imgURL, err := c.GetArtistImage(res.artist.ID)
-			if err == nil {
-				res.artist.ImageURL = imgURL
-			}
-			artists = append(artists, *res.artist)
+			seen[a.ID] = true
+			artists = append(artists, *a)
 		}
 
 		writeJSON(w, http.StatusOK, artists)

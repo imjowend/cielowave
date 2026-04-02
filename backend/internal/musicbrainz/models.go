@@ -16,9 +16,22 @@ type searchResponse struct {
 	} `json:"artists"`
 }
 
-// recordingsResponse models GET /ws/2/recording?artist={mbid}&inc=isrcs&fmt=json&limit=1
+// recordingsResponse models GET /ws/2/recording/?query=arid:{mbid}&fmt=json&limit=10
 type recordingsResponse struct {
 	Recordings []struct {
 		ISRCs []string `json:"isrcs"`
 	} `json:"recordings"`
+}
+
+// releasesResponse models GET /ws/2/release/?artist={mbid}&fmt=json&limit=1&inc=recordings+isrcs
+type releasesResponse struct {
+	Releases []struct {
+		Media []struct {
+			Tracks []struct {
+				Recording struct {
+					ISRCs []string `json:"isrcs"`
+				} `json:"recording"`
+			} `json:"tracks"`
+		} `json:"media"`
+	} `json:"releases"`
 }
