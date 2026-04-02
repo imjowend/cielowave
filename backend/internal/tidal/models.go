@@ -11,11 +11,11 @@ type Artist struct {
 type Track struct {
 	ID              string `json:"id"`
 	Title           string `json:"title"`
-	DurationSeconds int    `json:"durationSeconds,omitzero"`
-	ArtistID        string `json:"artistId"`
-	ArtistName      string `json:"artistName"`
-	AlbumName       string `json:"albumName"`
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
 	ISRC            string `json:"isrc,omitempty"`
+	AlbumName       string `json:"albumName,omitempty"`
+	ArtistID        string `json:"artistId,omitempty"`
+	ArtistName      string `json:"artistName,omitempty"`
 }
 
 // PlaylistRequest is the request body for POST /api/playlist.

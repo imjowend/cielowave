@@ -1,9 +1,11 @@
 package tidal
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -72,6 +74,27 @@ type tracksRelationshipResponse struct {
 	} `json:"links"`
 }
 
+// profileArtResponse models GET /v2/artists/{id}/relationships/profileArt.
+type profileArtResponse struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+// artworkResponse models GET /v2/artworks/{id}.
+type artworkResponse struct {
+	Data struct {
+		Attributes struct {
+			Files []struct {
+				Href string `json:"href"`
+				Meta struct {
+					Width int `json:"width"`
+				} `json:"meta"`
+			} `json:"files"`
+		} `json:"attributes"`
+	} `json:"data"`
+}
+
 type trackAttributes struct {
 	Title    string `json:"title"`
 	Duration int    `json:"duration"`
@@ -91,7 +114,12 @@ func NewTidalClient(clientID, clientSecret string) (*TidalClient, error) {
 	c := &TidalClient{
 		clientID:     clientID,
 		clientSecret: clientSecret,
-		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSNextProto: make(map[string]func(string, *tls.Conn) http.RoundTripper),
+			},
+		},
 	}
 	if err := c.refreshToken(); err != nil {
 		return nil, fmt.Errorf("initial auth failed: %w", err)
@@ -102,10 +130,15 @@ func NewTidalClient(clientID, clientSecret string) (*TidalClient, error) {
 func (c *TidalClient) refreshToken() error {
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
-	data.Set("client_id", c.clientID)
-	data.Set("client_secret", c.clientSecret)
 
-	resp, err := c.httpClient.Post(authURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", authURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.clientID, c.clientSecret) // <-- esto genera el header Basic automáticamente
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -155,6 +188,9 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 		return nil, err
 	}
 
+	fullURL := apiBase + path
+	log.Printf("doRequest: %s %s", method, fullURL)
+
 	req, err := http.NewRequest(method, apiBase+path, nil)
 	if err != nil {
 		return nil, err
@@ -163,6 +199,48 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 	req.Header.Set("Accept", "application/vnd.api+json")
 
 	return c.httpClient.Do(req)
+}
+
+// GetArtistImage returns the highest-resolution profile image URL for the given artist.
+// Returns ("", nil) if the artist has no profile art.
+func (c *TidalClient) GetArtistImage(artistID string) (string, error) {
+	// Step 1: resolve the artwork ID from the profileArt relationship.
+	resp, err := c.doRequest("GET", "/v2/artists/"+url.PathEscape(artistID)+"/relationships/profileArt?countryCode=US")
+	if err != nil {
+		return "", err
+	}
+	var par profileArtResponse
+	err = json.NewDecoder(resp.Body).Decode(&par)
+	resp.Body.Close()
+	if err != nil {
+		return "", err
+	}
+	if len(par.Data) == 0 {
+		return "", nil
+	}
+	artworkID := par.Data[0].ID
+
+	// Step 2: fetch the artwork and pick the file with the greatest width.
+	resp, err = c.doRequest("GET", "/v2/artworks/"+url.PathEscape(artworkID)+"?countryCode=US")
+	if err != nil {
+		return "", err
+	}
+	var ar artworkResponse
+	err = json.NewDecoder(resp.Body).Decode(&ar)
+	resp.Body.Close()
+	if err != nil {
+		return "", err
+	}
+
+	var best string
+	var bestWidth int
+	for _, f := range ar.Data.Attributes.Files {
+		if f.Meta.Width > bestWidth {
+			bestWidth = f.Meta.Width
+			best = f.Href
+		}
+	}
+	return best, nil
 }
 
 // SearchArtists searches for artists matching query.
@@ -203,30 +281,51 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 		if err := json.Unmarshal(res.Attributes, &attr); err != nil {
 			continue
 		}
-		a := Artist{ID: res.ID, Name: attr.Name}
-		if len(attr.ImageLinks) > 0 {
-			a.ImageURL = attr.ImageLinks[0].Href
-		}
-		artists = append(artists, a)
+		artists = append(artists, Artist{ID: res.ID, Name: attr.Name})
 	}
+
+	// Fetch profile images in parallel.
+	var wg sync.WaitGroup
+	for i := range artists {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			imgURL, err := c.GetArtistImage(artists[i].ID)
+			if err == nil {
+				artists[i].ImageURL = imgURL
+			}
+		}(i)
+	}
+	wg.Wait()
+
 	return artists, nil
 }
 
-// GetArtistTracks returns all tracks for the given artist, paginating as needed.
+// GetArtistTracks returns tracks for the given artist, paginating as needed.
+// If maxTracks > 0, pagination stops once that many tracks have been collected.
 // Calls GET /v2/artists/{artistID}/relationships/tracks?countryCode=US&include=tracks
-func (c *TidalClient) GetArtistTracks(artistID string) ([]Track, error) {
+func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, error) {
 	var all []Track
-	path := "/v2/artists/" + url.PathEscape(artistID) + "/relationships/tracks?countryCode=US&include=tracks"
-
+	path := "/v2/artists/" + url.PathEscape(artistID) + "/relationships/tracks?countryCode=US&include=tracks&collapseBy=FINGERPRINT"
+	log.Printf("GetArtistTracks path: %s", path)
 	for path != "" {
+		if maxTracks > 0 && len(all) >= maxTracks {
+			break
+		}
 		resp, err := c.doRequest("GET", path)
 		if err != nil {
 			return nil, err
 		}
 
+		/*if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("get tracks failed (%d): %s", resp.StatusCode, body)
+		}*/
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			log.Printf("get tracks failed: status=%d body=%s", resp.StatusCode, body)
 			return nil, fmt.Errorf("get tracks failed (%d): %s", resp.StatusCode, body)
 		}
 
@@ -261,7 +360,6 @@ func (c *TidalClient) GetArtistTracks(artistID string) ([]Track, error) {
 				AlbumName:       attr.Album.Title,
 				ISRC:            attr.ISRC,
 			}
-			// Use main artist; fall back to first listed.
 			for _, a := range attr.Artists {
 				if t.ArtistID == "" {
 					t.ArtistID = a.ID
@@ -281,16 +379,22 @@ func (c *TidalClient) GetArtistTracks(artistID string) ([]Track, error) {
 		if next == "" {
 			break
 		}
-		// next may be a full URL or a relative path.
+		// next may be a full URL or a relative path; extract path+query either way.
+		var nextPath string
 		if strings.HasPrefix(next, "http") {
 			u, err := url.Parse(next)
 			if err != nil {
 				break
 			}
-			path = u.RequestURI()
+			nextPath = u.RequestURI()
 		} else {
-			path = next
+			nextPath = next
 		}
+		// Ensure the path includes /v2 regardless of which branch was taken.
+		if !strings.HasPrefix(nextPath, "/v2") {
+			nextPath = "/v2" + nextPath
+		}
+		path = nextPath
 	}
 
 	return all, nil

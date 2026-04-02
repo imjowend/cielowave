@@ -5,31 +5,43 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync"
 
 	"cielowave/backend/internal/playlist"
 	"cielowave/backend/internal/tidal"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Cargar variables de entorno desde .env (si existe), con fallback a variables del sistema
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using system environment")
+	}
+
+	// Carga las variables de entorno necesarias para el cliente de Tidal
 	clientID := os.Getenv("TIDAL_CLIENT_ID")
 	clientSecret := os.Getenv("TIDAL_CLIENT_SECRET")
+
+	// Carga el puerto del servidor, con valor por defecto 8080
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
+	// Inicializa el cliente de Tidal
 	client, err := tidal.NewTidalClient(clientID, clientSecret)
 	if err != nil {
 		log.Fatalf("failed to initialize Tidal client: %v", err)
 	}
 
+	// Configura las rutas del servidor HTTP
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /api/artists", handleSearchArtists(client))
 	mux.HandleFunc("GET /api/artists/{id}/tracks", handleGetArtistTracks(client))
 	mux.HandleFunc("POST /api/playlist", handleCreatePlaylist(client))
 
+	// Inicia el servidor HTTP con middleware CORS
 	log.Printf("CieloWave backend listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, corsMiddleware(mux)); err != nil {
 		log.Fatalf("server error: %v", err)
@@ -82,7 +94,7 @@ func handleSearchArtists(c *tidal.TidalClient) http.HandlerFunc {
 func handleGetArtistTracks(c *tidal.TidalClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		tracks, err := c.GetArtistTracks(id)
+		tracks, err := c.GetArtistTracks(id, 0)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -109,19 +121,22 @@ func handleCreatePlaylist(c *tidal.TidalClient) http.HandlerFunc {
 		var (
 			tracksA, tracksB []tidal.Track
 			errA, errB       error
-			wg               sync.WaitGroup
+		//	wg               sync.WaitGroup
 		)
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			tracksA, errA = c.GetArtistTracks(req.ArtistAID)
-		}()
-		go func() {
-			defer wg.Done()
-			tracksB, errB = c.GetArtistTracks(req.ArtistBID)
-		}()
-		wg.Wait()
-
+		/*
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				tracksA, errA = c.GetArtistTracks(req.ArtistAID)
+			}()
+			go func() {
+				defer wg.Done()
+				tracksB, errB = c.GetArtistTracks(req.ArtistBID)
+			}()
+			wg.Wait()
+		*/
+		tracksA, errA = c.GetArtistTracks(req.ArtistAID, req.Count*2)
+		tracksB, errB = c.GetArtistTracks(req.ArtistBID, req.Count*2)
 		if errA != nil {
 			writeError(w, http.StatusBadGateway, "failed to fetch tracks for artist A: "+errA.Error())
 			return
