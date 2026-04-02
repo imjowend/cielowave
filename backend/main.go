@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 
+	"cielowave/backend/internal/musicbrainz"
 	"cielowave/backend/internal/playlist"
 	"cielowave/backend/internal/tidal"
 
@@ -34,10 +36,17 @@ func main() {
 		log.Fatalf("failed to initialize Tidal client: %v", err)
 	}
 
+	// Inicializa el cliente de MusicBrainz
+	mbUserAgent := os.Getenv("MUSICBRAINZ_USER_AGENT")
+	if mbUserAgent == "" {
+		mbUserAgent = "CieloWave/0.1.0 (noreply@example.com)"
+	}
+	mbClient := musicbrainz.NewMusicBrainzClient(mbUserAgent)
+
 	// Configura las rutas del servidor HTTP
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
-	mux.HandleFunc("GET /api/artists", handleSearchArtists(client))
+	mux.HandleFunc("GET /api/artists", handleSearchArtists(client, mbClient))
 	mux.HandleFunc("GET /api/artists/{id}/tracks", handleGetArtistTracks(client))
 	mux.HandleFunc("POST /api/playlist", handleCreatePlaylist(client))
 
@@ -75,18 +84,69 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func handleSearchArtists(c *tidal.TidalClient) http.HandlerFunc {
+func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		if q == "" {
 			writeError(w, http.StatusBadRequest, "missing query parameter: q")
 			return
 		}
-		artists, err := c.SearchArtists(q)
+
+		mbResults, err := mb.SearchArtists(q)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeError(w, http.StatusBadGateway, "musicbrainz search failed: "+err.Error())
 			return
 		}
+
+		// Resolve Tidal IDs in parallel, max 3 concurrent goroutines.
+		const maxConcurrent = 3
+		sem := make(chan struct{}, maxConcurrent)
+
+		type result struct {
+			artist *tidal.Artist
+		}
+		results := make([]result, len(mbResults))
+		var wg sync.WaitGroup
+
+		for i, mbr := range mbResults {
+			wg.Add(1)
+			go func(i int, mbid string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				isrc, err := mb.GetArtistISRC(mbid)
+				if err != nil || isrc == "" {
+					log.Printf("no ISRC for mbid %s: %v", mbid, err)
+					return
+				}
+				artist, err := c.ResolveArtistByISRC(isrc)
+				if err != nil {
+					log.Printf("tidal resolve failed for isrc %s: %v", isrc, err)
+					return
+				}
+				results[i].artist = artist
+			}(i, mbr.MBID)
+		}
+		wg.Wait()
+
+		// Collect resolved artists, preserving MusicBrainz result order.
+		seen := make(map[string]bool)
+		artists := make([]tidal.Artist, 0, len(results))
+		for _, res := range results {
+			if res.artist == nil || seen[res.artist.ID] {
+				continue
+			}
+			seen[res.artist.ID] = true
+
+			// Fetch profile image from Tidal.
+			imgURL, err := c.GetArtistImage(res.artist.ID)
+			if err == nil {
+				res.artist.ImageURL = imgURL
+			}
+			artists = append(artists, *res.artist)
+		}
+
 		writeJSON(w, http.StatusOK, artists)
 	}
 }

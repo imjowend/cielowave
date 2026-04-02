@@ -74,6 +74,20 @@ type tracksRelationshipResponse struct {
 	} `json:"links"`
 }
 
+// isrcTracksResponse models GET /v2/tracks?filter[isrc]={isrc}&countryCode=US&include=artists.
+type isrcTracksResponse struct {
+	Data []struct {
+		Relationships struct {
+			Artists struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			} `json:"artists"`
+		} `json:"relationships"`
+	} `json:"data"`
+	Included []jsonAPIResource `json:"included"`
+}
+
 // profileArtResponse models GET /v2/artists/{id}/relationships/profileArt.
 type profileArtResponse struct {
 	Data []struct {
@@ -299,6 +313,49 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 	wg.Wait()
 
 	return artists, nil
+}
+
+// ResolveArtistByISRC looks up the Tidal artist that owns the given ISRC.
+// Returns (nil, nil) if the ISRC is not found in Tidal.
+// The filter[isrc] query param must be sent with literal brackets (not percent-encoded).
+func (c *TidalClient) ResolveArtistByISRC(isrc string) (*Artist, error) {
+	// Build the path with literal brackets so they reach Tidal unencoded.
+	path := "/v2/tracks?filter[isrc]=" + url.QueryEscape(isrc) + "&countryCode=US&include=artists"
+	resp, err := c.doRequest("GET", path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("tidal isrc lookup failed (%d): %s", resp.StatusCode, body)
+	}
+
+	var result isrcTracksResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if len(result.Data) == 0 {
+		return nil, nil
+	}
+	artistRefs := result.Data[0].Relationships.Artists.Data
+	if len(artistRefs) == 0 {
+		return nil, nil
+	}
+	artistID := artistRefs[0].ID
+
+	for _, inc := range result.Included {
+		if inc.Type == "artists" && inc.ID == artistID {
+			var attr artistAttributes
+			if err := json.Unmarshal(inc.Attributes, &attr); err != nil {
+				return nil, err
+			}
+			return &Artist{ID: inc.ID, Name: attr.Name}, nil
+		}
+	}
+	return nil, nil
 }
 
 // GetArtistTracks returns tracks for the given artist, paginating as needed.
