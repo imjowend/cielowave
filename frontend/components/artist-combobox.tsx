@@ -33,15 +33,29 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
   const [search, setSearch] = useState("");
   const [artists, setArtists] = useState<Artist[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showSlowMessage, setShowSlowMessage] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const slowMessageRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const searchArtists = useCallback(async (query: string) => {
-    if (!query.trim()) {
+    if (!query.trim() || query.trim().length < 2) {
       setArtists([]);
+      setLoading(false);
+      setShowSlowMessage(false);
+      if (slowMessageRef.current) {
+        clearTimeout(slowMessageRef.current);
+      }
       return;
     }
 
     setLoading(true);
+    setShowSlowMessage(false);
+
+    // Show "slow search" message after 2 seconds
+    slowMessageRef.current = setTimeout(() => {
+      setShowSlowMessage(true);
+    }, 2000);
+
     try {
       const response = await fetch(
         `${API_URL}/api/artists?q=${encodeURIComponent(query)}`
@@ -55,6 +69,10 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
       setArtists([]);
     } finally {
       setLoading(false);
+      setShowSlowMessage(false);
+      if (slowMessageRef.current) {
+        clearTimeout(slowMessageRef.current);
+      }
     }
   }, []);
 
@@ -65,7 +83,7 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
 
     debounceRef.current = setTimeout(() => {
       searchArtists(search);
-    }, 300);
+    }, 500);
 
     return () => {
       if (debounceRef.current) {
@@ -126,8 +144,15 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
             />
             <CommandList>
               {loading ? (
-                <div className="py-6 text-center text-sm text-muted-foreground">
-                  Searching...
+                <div className="flex flex-col gap-2 py-6 text-center">
+                  <div className="text-sm text-muted-foreground">
+                    Searching in Tidal catalog...
+                  </div>
+                  {showSlowMessage && (
+                    <div className="text-xs text-muted-foreground/70">
+                      Resolving artists, this may take a moment...
+                    </div>
+                  )}
                 </div>
               ) : search.trim() && artists.length === 0 ? (
                 <CommandEmpty>No artists found.</CommandEmpty>
