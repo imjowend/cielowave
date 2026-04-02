@@ -26,7 +26,7 @@ interface ArtistComboboxProps {
   onSelect: (artist: Artist | null) => void;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const API_URL = "";
 
 export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) {
   const [open, setOpen] = useState(false);

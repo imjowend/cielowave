@@ -8,7 +8,7 @@ import { ArtistCombobox } from "@/components/artist-combobox";
 import { TrackList } from "@/components/track-list";
 import type { Artist, Track, PlaylistResponse } from "@/types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const API_URL = "";
 
 export function PlaylistMixer() {
   const [artistA, setArtistA] = useState<Artist | null>(null);
