@@ -468,16 +468,20 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 		if err != nil {
 			return nil, err
 		}
-
 		// Index included track resources by ID.
 		includedByID := make(map[string]jsonAPIResource, len(tr.Included))
+		log.Printf("page data count: %d, included count: %d", len(tr.Data), len(tr.Included))
 		for _, res := range tr.Included {
+			log.Printf("included: type=%s id=%s", res.Type, res.ID)
+
 			if res.Type == "tracks" {
 				includedByID[res.ID] = res
 			}
 		}
 
 		for _, ref := range tr.Data {
+			log.Printf("data ref id=%s", ref.ID)
+
 			res, ok := includedByID[ref.ID]
 			if !ok {
 				continue
