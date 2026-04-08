@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -110,9 +110,68 @@ type artworkResponse struct {
 	} `json:"data"`
 }
 
+// flexInt unmarshals a JSON number or quoted string into an int.
+// Tidal's API sometimes returns duration as a string (e.g. "209").
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	var i int
+	if err := json.Unmarshal(b, &i); err == nil {
+		*f = flexInt(i)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	// Plain integer string (e.g. "209")
+	if i, err := strconv.Atoi(s); err == nil {
+		*f = flexInt(i)
+		return nil
+	}
+	// ISO 8601 duration (e.g. "PT3M13S")
+	secs, err := parseISO8601Seconds(s)
+	if err != nil {
+		return err
+	}
+	*f = flexInt(secs)
+	return nil
+}
+
+// parseISO8601Seconds converts a PT duration string to total seconds.
+// Handles PTxHxMxS, PTxMxS, PTxS forms.
+func parseISO8601Seconds(s string) (int, error) {
+	s = strings.TrimPrefix(s, "PT")
+	var total int
+	if h, rest, ok := strings.Cut(s, "H"); ok {
+		n, err := strconv.Atoi(h)
+		if err != nil {
+			return 0, fmt.Errorf("invalid hours in duration %q: %w", s, err)
+		}
+		total += n * 3600
+		s = rest
+	}
+	if m, rest, ok := strings.Cut(s, "M"); ok {
+		n, err := strconv.Atoi(m)
+		if err != nil {
+			return 0, fmt.Errorf("invalid minutes in duration %q: %w", s, err)
+		}
+		total += n * 60
+		s = rest
+	}
+	if sec, _, ok := strings.Cut(s, "S"); ok {
+		n, err := strconv.Atoi(sec)
+		if err != nil {
+			return 0, fmt.Errorf("invalid seconds in duration %q: %w", s, err)
+		}
+		total += n
+	}
+	return total, nil
+}
+
 type trackAttributes struct {
-	Title    string `json:"title"`
-	Duration int    `json:"duration"`
+	Title    string  `json:"title"`
+	Duration flexInt `json:"duration"`
 	ISRC     string `json:"isrc"`
 	Album    struct {
 		Title string `json:"title"`
@@ -208,7 +267,7 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 		}
 
 		fullURL := apiBase + path
-		log.Printf("doRequest: %s %s (attempt %d)", method, fullURL, attempt+1)
+		slog.Debug("doRequest", "method", method, "url", fullURL, "attempt", attempt+1)
 
 		req, err := http.NewRequest(method, fullURL, nil)
 		if err != nil {
@@ -239,7 +298,7 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 				wait = time.Duration(secs) * time.Second
 			}
 		}
-		log.Printf("doRequest: 429 rate limit, waiting %v before retry %d", wait, attempt+1)
+		slog.Warn("rate limited, retrying", "wait", wait, "attempt", attempt+1)
 		time.Sleep(wait)
 	}
 
@@ -324,6 +383,7 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 		}
 		var attr artistAttributes
 		if err := json.Unmarshal(res.Attributes, &attr); err != nil {
+			slog.Warn("unmarshal artist attributes", "artist_id", res.ID, "err", err)
 			continue
 		}
 		artists = append(artists, Artist{ID: res.ID, Name: attr.Name})
@@ -421,6 +481,7 @@ func (c *TidalClient) SearchArtistByName(name string) (*Artist, error) {
 		if inc.Type == "artists" && inc.ID == artistID {
 			var attr artistAttributes
 			if err := json.Unmarshal(inc.Attributes, &attr); err != nil {
+				slog.Warn("unmarshal artist attributes", "artist_id", inc.ID, "err", err)
 				return nil, nil
 			}
 			return &Artist{ID: inc.ID, Name: attr.Name}, nil
@@ -435,7 +496,7 @@ func (c *TidalClient) SearchArtistByName(name string) (*Artist, error) {
 func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, error) {
 	var all []Track
 	path := "/v2/artists/" + url.PathEscape(artistID) + "/relationships/tracks?countryCode=US&include=tracks&collapseBy=FINGERPRINT"
-	log.Printf("GetArtistTracks path: %s", path)
+	slog.Debug("GetArtistTracks", "path", path)
 	firstPage := true
 	for path != "" {
 		if maxTracks > 0 && len(all) >= maxTracks {
@@ -458,7 +519,7 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			log.Printf("get tracks failed: status=%d body=%s", resp.StatusCode, body)
+			slog.Error("get tracks failed", "status", resp.StatusCode, "body", string(body))
 			return nil, fmt.Errorf("get tracks failed (%d): %s", resp.StatusCode, body)
 		}
 
@@ -470,9 +531,9 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 		}
 		// Index included track resources by ID.
 		includedByID := make(map[string]jsonAPIResource, len(tr.Included))
-		log.Printf("page data count: %d, included count: %d", len(tr.Data), len(tr.Included))
+		slog.Debug("page fetched", "data_count", len(tr.Data), "included_count", len(tr.Included))
 		for _, res := range tr.Included {
-			log.Printf("included: type=%s id=%s", res.Type, res.ID)
+			slog.Debug("included resource", "type", res.Type, "id", res.ID)
 
 			if res.Type == "tracks" {
 				includedByID[res.ID] = res
@@ -480,7 +541,7 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 		}
 
 		for _, ref := range tr.Data {
-			log.Printf("data ref id=%s", ref.ID)
+			slog.Debug("data ref", "id", ref.ID)
 
 			res, ok := includedByID[ref.ID]
 			if !ok {
@@ -488,12 +549,14 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 			}
 			var attr trackAttributes
 			if err := json.Unmarshal(res.Attributes, &attr); err != nil {
+				slog.Error("unmarshal track attributes", "track_id", res.ID, "err", err)
 				continue
 			}
+			slog.Debug("parsed track", "id", res.ID, "title", attr.Title)
 			t := Track{
 				ID:              res.ID,
 				Title:           attr.Title,
-				DurationSeconds: attr.Duration,
+				DurationSeconds: int(attr.Duration),
 				AlbumName:       attr.Album.Title,
 				ISRC:            attr.ISRC,
 			}

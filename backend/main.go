@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -49,9 +49,11 @@ func (ac *artistCache) set(key string, artist tidal.Artist) {
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	// Cargar variables de entorno desde .env (si existe), con fallback a variables del sistema
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using system environment")
+		slog.Info("No .env file found, using system environment")
 	}
 
 	// Carga las variables de entorno necesarias para el cliente de Tidal
@@ -67,7 +69,8 @@ func main() {
 	// Inicializa el cliente de Tidal
 	client, err := tidal.NewTidalClient(clientID, clientSecret)
 	if err != nil {
-		log.Fatalf("failed to initialize Tidal client: %v", err)
+		slog.Error("failed to initialize Tidal client", "err", err)
+		os.Exit(1)
 	}
 
 	// Inicializa el cliente de MusicBrainz
@@ -88,9 +91,10 @@ func main() {
 	mux.HandleFunc("POST /api/playlist", handleCreatePlaylist(client))
 
 	// Inicia el servidor HTTP con middleware CORS
-	log.Printf("CieloWave backend listening on :%s", port)
+	slog.Info("CieloWave backend listening", "port", port)
 	if err := http.ListenAndServe(":"+port, corsMiddleware(mux)); err != nil {
-		log.Fatalf("server error: %v", err)
+		slog.Error("server error", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -161,14 +165,14 @@ func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient
 
 				cacheKey := strings.ToLower(strings.TrimSpace(name))
 				if cached, ok := cache.get(cacheKey); ok {
-					log.Printf("cache hit for artist %q", name)
+					slog.Debug("cache hit for artist", "name", name)
 					resultCh <- resolveResult{&cached, i}
 					return
 				}
 
 				isrc, err := mb.GetArtistISRC(mbid)
 				if err != nil || isrc == "" {
-					log.Printf("no ISRC for mbid %s (%s): %v", mbid, name, err)
+					slog.Warn("no ISRC for artist", "mbid", mbid, "name", name, "err", err)
 					// Fallback: search by artist name directly in Tidal
 					artist, _ := c.SearchArtistByName(name)
 					if artist != nil {
@@ -184,7 +188,7 @@ func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient
 
 				artist, err := c.ResolveArtistByISRC(isrc)
 				if err != nil || artist == nil {
-					log.Printf("tidal resolve failed for isrc %s: %v", isrc, err)
+					slog.Warn("tidal resolve failed", "isrc", isrc, "err", err)
 					resultCh <- resolveResult{nil, i}
 					return
 				}
