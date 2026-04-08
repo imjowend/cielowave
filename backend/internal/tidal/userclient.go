@@ -1,17 +1,12 @@
 package tidal
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -91,12 +86,62 @@ func newUUID() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
-// Blank identifiers to keep imports used until methods are added in later tasks.
-var (
-	_ = bytes.NewReader
-	_ = json.Marshal
-	_ = io.ReadAll
-	_ = slog.Info
-	_ = strings.NewReader
-	_ = url.Values{}
-)
+// SavePlaylist stores a generated playlist and returns its UUID.
+func (uc *UserClient) SavePlaylist(artistA, artistB string, tracks []Track) (string, error) {
+	id, err := newUUID()
+	if err != nil {
+		return "", fmt.Errorf("generate playlist id: %w", err)
+	}
+	uc.playlists.set(id, SavedPlaylist{
+		ID:        id,
+		ArtistA:   artistA,
+		ArtistB:   artistB,
+		Tracks:    tracks,
+		CreatedAt: time.Now(),
+	})
+	return id, nil
+}
+
+// GetPlaylist retrieves a stored playlist by ID.
+func (uc *UserClient) GetPlaylist(id string) (SavedPlaylist, bool) {
+	return uc.playlists.get(id)
+}
+
+// GetState retrieves a stored OAuth state.
+func (uc *UserClient) GetState(state string) (OAuthState, bool) {
+	return uc.states.get(state)
+}
+
+// DeleteState removes an OAuth state after use.
+func (uc *UserClient) DeleteState(state string) {
+	uc.states.delete(state)
+}
+
+// BuildLoginURL generates PKCE params, stores the state, and returns the Tidal login URL.
+func (uc *UserClient) BuildLoginURL(playlistID string) (string, error) {
+	verifier, err := generateCodeVerifier()
+	if err != nil {
+		return "", fmt.Errorf("generate verifier: %w", err)
+	}
+	challenge := computeCodeChallenge(verifier)
+	state, err := generateState()
+	if err != nil {
+		return "", fmt.Errorf("generate state: %w", err)
+	}
+	uc.states.set(state, OAuthState{
+		CodeVerifier: verifier,
+		PlaylistID:   playlistID,
+		CreatedAt:    time.Now(),
+	})
+	params := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {uc.clientID},
+		"redirect_uri":          {uc.redirectURI},
+		"scope":                 {tidalScopes},
+		"code_challenge_method": {"S256"},
+		"code_challenge":        {challenge},
+		"state":                 {state},
+	}
+	return tidalLoginURL + "?" + params.Encode(), nil
+}
+
