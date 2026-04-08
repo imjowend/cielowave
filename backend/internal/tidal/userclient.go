@@ -150,14 +150,14 @@ func (uc *UserClient) BuildLoginURL(playlistID string) (string, error) {
 	return tidalLoginURL + "?" + params.Encode(), nil
 }
 
-// overrideAuthURL replaces the token endpoint URL; used in tests only.
-func (uc *UserClient) overrideAuthURL(u string) { uc.authURL = u }
+// OverrideAuthURL replaces the token endpoint URL; used in tests only.
+func (uc *UserClient) OverrideAuthURL(u string) { uc.authURL = u }
 
-// overrideAPIBase replaces the API base URL; used in tests only.
-func (uc *UserClient) overrideAPIBase(u string) { uc.apiBase = u }
+// OverrideAPIBase replaces the API base URL; used in tests only.
+func (uc *UserClient) OverrideAPIBase(u string) { uc.apiBase = u }
 
-// overrideLegacyBase replaces the legacy base URL; used in tests only.
-func (uc *UserClient) overrideLegacyBase(u string) { uc.legacyBase = u }
+// OverrideLegacyBase replaces the legacy base URL; used in tests only.
+func (uc *UserClient) OverrideLegacyBase(u string) { uc.legacyBase = u }
 
 type userTokenResponse struct {
 	AccessToken string `json:"access_token"`

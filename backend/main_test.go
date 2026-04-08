@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -89,5 +91,85 @@ func TestHandleTidalCallback_InvalidState(t *testing.T) {
 	}
 	if !strings.Contains(w.Header().Get("Location"), "error=auth_failed") {
 		t.Fatalf("expected error=auth_failed in redirect, got %q", w.Header().Get("Location"))
+	}
+}
+
+func TestHandleTidalCallback_ExchangeFails(t *testing.T) {
+	// Mock token endpoint that returns 400
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, `{"error":"invalid_grant"}`)
+	}))
+	defer tokenSrv.Close()
+
+	uc := newTestUserClient()
+	uc.OverrideAuthURL(tokenSrv.URL)
+
+	playlistID, err := uc.SavePlaylist("A", "B", []tidal.Track{{ID: "1"}})
+	if err != nil {
+		t.Fatalf("save playlist: %v", err)
+	}
+	loginURL, err := uc.BuildLoginURL(playlistID)
+	if err != nil {
+		t.Fatalf("build login URL: %v", err)
+	}
+	u, _ := url.Parse(loginURL)
+	state := u.Query().Get("state")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/tidal/callback?code=badcode&state="+state, nil)
+	w := httptest.NewRecorder()
+	handleTidalCallback(uc)(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Location"), "error=auth_failed") {
+		t.Fatalf("expected error=auth_failed, got %q", w.Header().Get("Location"))
+	}
+}
+
+func TestHandleTidalCallback_Success(t *testing.T) {
+	// Mock token endpoint — returns access token
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"access_token":"user-tok","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenSrv.Close()
+
+	// Mock Tidal API — handles POST /v2/my-collection/playlists and relationships/items
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "relationships/items") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintln(w, `{"data":{"id":"new-pl-id","type":"playlists"}}`)
+	}))
+	defer apiSrv.Close()
+
+	uc := newTestUserClient()
+	uc.OverrideAuthURL(tokenSrv.URL)
+	uc.OverrideAPIBase(apiSrv.URL)
+
+	playlistID, err := uc.SavePlaylist("Duki", "Nicki", []tidal.Track{{ID: "track-1"}, {ID: "track-2"}})
+	if err != nil {
+		t.Fatalf("save playlist: %v", err)
+	}
+	loginURL, err := uc.BuildLoginURL(playlistID)
+	if err != nil {
+		t.Fatalf("build login URL: %v", err)
+	}
+	u, _ := url.Parse(loginURL)
+	state := u.Query().Get("state")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/tidal/callback?code=goodcode&state="+state, nil)
+	w := httptest.NewRecorder()
+	handleTidalCallback(uc)(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Location"), "saved=true") {
+		t.Fatalf("expected saved=true, got %q", w.Header().Get("Location"))
 	}
 }

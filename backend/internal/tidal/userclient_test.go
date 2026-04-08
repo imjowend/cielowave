@@ -128,7 +128,7 @@ func TestExchangeCode_Success(t *testing.T) {
 	defer srv.Close()
 
 	uc := NewUserClient("cid", "https://example.com/cb")
-	uc.overrideAuthURL(srv.URL)
+	uc.OverrideAuthURL(srv.URL)
 	token, err := uc.ExchangeCode("auth-code-123", "my-verifier")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -146,7 +146,7 @@ func TestExchangeCode_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	uc := NewUserClient("cid", "https://example.com/cb")
-	uc.overrideAuthURL(srv.URL)
+	uc.OverrideAuthURL(srv.URL)
 	_, err := uc.ExchangeCode("bad-code", "verifier")
 	if err == nil {
 		t.Fatal("expected error for 400 response")
@@ -167,7 +167,7 @@ func TestCreatePlaylist_Success(t *testing.T) {
 	defer srv.Close()
 
 	uc := NewUserClient("cid", "https://example.com/cb")
-	uc.overrideAPIBase(srv.URL)
+	uc.OverrideAPIBase(srv.URL)
 	id, err := uc.CreatePlaylist("user-token", "Duki × Nicki — CieloWave")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -192,8 +192,8 @@ func TestCreatePlaylist_403FallbackToLegacy(t *testing.T) {
 	defer primary.Close()
 
 	uc := NewUserClient("cid", "https://example.com/cb")
-	uc.overrideAPIBase(primary.URL)
-	uc.overrideLegacyBase(legacy.URL)
+	uc.OverrideAPIBase(primary.URL)
+	uc.OverrideLegacyBase(legacy.URL)
 	id, err := uc.CreatePlaylist("user-token", "title")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -215,7 +215,7 @@ func TestAddTracks_Success(t *testing.T) {
 	defer srv.Close()
 
 	uc := NewUserClient("cid", "https://example.com/cb")
-	uc.overrideAPIBase(srv.URL)
+	uc.OverrideAPIBase(srv.URL)
 	err := uc.AddTracks("user-token", "playlist-1", []string{"track-a", "track-b"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
