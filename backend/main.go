@@ -348,6 +348,10 @@ func handleTidalLogin(uc *tidal.UserClient) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "missing playlist_id")
 			return
 		}
+		if _, ok := uc.GetPlaylist(playlistID); !ok {
+			writeError(w, http.StatusNotFound, "playlist not found or expired")
+			return
+		}
 		loginURL, err := uc.BuildLoginURL(playlistID)
 		if err != nil {
 			slog.Error("build login URL failed", "err", err)
@@ -369,6 +373,7 @@ func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
 			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
 			return
 		}
+		uc.DeleteState(state)
 
 		userToken, err := uc.ExchangeCode(code, oauthState.CodeVerifier)
 		if err != nil {
@@ -402,7 +407,6 @@ func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
 			return
 		}
 
-		uc.DeleteState(state)
 		http.Redirect(w, r, frontendBase+"?saved=true", http.StatusFound)
 	}
 }
