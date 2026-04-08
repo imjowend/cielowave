@@ -1,7 +1,9 @@
 package tidal
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -148,5 +150,89 @@ func TestExchangeCode_HTTPError(t *testing.T) {
 	_, err := uc.ExchangeCode("bad-code", "verifier")
 	if err == nil {
 		t.Fatal("expected error for 400 response")
+	}
+}
+
+func TestCreatePlaylist_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer user-token" {
+			t.Errorf("unexpected Authorization: %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintln(w, `{"data":{"id":"playlist-999","type":"playlists"}}`)
+	}))
+	defer srv.Close()
+
+	uc := NewUserClient("cid", "https://example.com/cb")
+	uc.overrideAPIBase(srv.URL)
+	id, err := uc.CreatePlaylist("user-token", "Duki × Nicki — CieloWave")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "playlist-999" {
+		t.Fatalf("expected playlist-999, got %q", id)
+	}
+}
+
+func TestCreatePlaylist_403FallbackToLegacy(t *testing.T) {
+	legacyCalled := false
+	legacy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		legacyCalled = true
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"data":{"id":"legacy-playlist","type":"playlists"}}`)
+	}))
+	defer legacy.Close()
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer primary.Close()
+
+	uc := NewUserClient("cid", "https://example.com/cb")
+	uc.overrideAPIBase(primary.URL)
+	uc.overrideLegacyBase(legacy.URL)
+	id, err := uc.CreatePlaylist("user-token", "title")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !legacyCalled {
+		t.Fatal("expected legacy endpoint to be called on 403")
+	}
+	if id != "legacy-playlist" {
+		t.Fatalf("expected legacy-playlist, got %q", id)
+	}
+}
+
+func TestAddTracks_Success(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	uc := NewUserClient("cid", "https://example.com/cb")
+	uc.overrideAPIBase(srv.URL)
+	err := uc.AddTracks("user-token", "playlist-1", []string{"track-a", "track-b"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var body struct {
+		Data []struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("invalid body: %v", err)
+	}
+	if len(body.Data) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(body.Data))
+	}
+	if body.Data[0].Type != "tracks" || body.Data[0].ID != "track-a" {
+		t.Fatalf("unexpected first item: %+v", body.Data[0])
 	}
 }

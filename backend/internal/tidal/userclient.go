@@ -1,12 +1,14 @@
 package tidal
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -151,6 +153,12 @@ func (uc *UserClient) BuildLoginURL(playlistID string) (string, error) {
 // overrideAuthURL replaces the token endpoint URL; used in tests only.
 func (uc *UserClient) overrideAuthURL(u string) { uc.authURL = u }
 
+// overrideAPIBase replaces the API base URL; used in tests only.
+func (uc *UserClient) overrideAPIBase(u string) { uc.apiBase = u }
+
+// overrideLegacyBase replaces the legacy base URL; used in tests only.
+func (uc *UserClient) overrideLegacyBase(u string) { uc.legacyBase = u }
+
 type userTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
@@ -178,5 +186,114 @@ func (uc *UserClient) ExchangeCode(code, codeVerifier string) (string, error) {
 		return "", fmt.Errorf("decode token response: %w", err)
 	}
 	return tr.AccessToken, nil
+}
+
+type createPlaylistResponse struct {
+	Data struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+// CreatePlaylist creates a new playlist in the user's Tidal collection.
+// Falls back to the legacy endpoint on 403.
+func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"data": map[string]any{
+			"type": "playlists",
+			"attributes": map[string]string{
+				"name":        title,
+				"description": "Playlist generada con CieloWave",
+			},
+		},
+	})
+	req, err := http.NewRequest(http.MethodPost, uc.apiBase+"/v2/my-collection/playlists", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	req.Header.Set("Content-Type", "application/vnd.api+json")
+
+	resp, err := uc.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create playlist: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusForbidden {
+		slog.Warn("create playlist returned 403, trying legacy endpoint")
+		return uc.createPlaylistLegacy(userToken, title)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create playlist failed (%d): %s", resp.StatusCode, b)
+	}
+	var result createPlaylistResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode create playlist response: %w", err)
+	}
+	return result.Data.ID, nil
+}
+
+func (uc *UserClient) createPlaylistLegacy(userToken, title string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"data": map[string]any{
+			"type": "playlists",
+			"attributes": map[string]string{
+				"name":        title,
+				"description": "Playlist generada con CieloWave",
+			},
+		},
+	})
+	req, err := http.NewRequest(http.MethodPost, uc.legacyBase+"/v2/my-collection/playlists/folders/create-playlist", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	req.Header.Set("Content-Type", "application/vnd.api+json")
+
+	resp, err := uc.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create playlist legacy: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create playlist legacy failed (%d): %s", resp.StatusCode, b)
+	}
+	var result createPlaylistResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode legacy response: %w", err)
+	}
+	return result.Data.ID, nil
+}
+
+// AddTracks adds track IDs to an existing playlist via JSON:API relationships.
+func (uc *UserClient) AddTracks(userToken, playlistID string, trackIDs []string) error {
+	items := make([]map[string]string, len(trackIDs))
+	for i, id := range trackIDs {
+		items[i] = map[string]string{"type": "tracks", "id": id}
+	}
+	body, _ := json.Marshal(map[string]any{"data": items})
+
+	endpoint := uc.apiBase + "/v2/my-collection/playlists/" + url.PathEscape(playlistID) + "/relationships/items"
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	req.Header.Set("Content-Type", "application/vnd.api+json")
+
+	resp, err := uc.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("add tracks: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("add tracks failed (%d): %s", resp.StatusCode, b)
+	}
+	return nil
 }
 
