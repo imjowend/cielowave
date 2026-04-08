@@ -62,6 +62,11 @@ func main() {
 	clientSecret := os.Getenv("TIDAL_CLIENT_SECRET")
 	redirectURI := os.Getenv("TIDAL_REDIRECT_URI")
 
+	if redirectURI == "" {
+		slog.Error("TIDAL_REDIRECT_URI is required")
+		os.Exit(1)
+	}
+
 	// Carga el puerto del servidor, con valor por defecto 8080
 	port := os.Getenv("PORT")
 	if port == "" {
