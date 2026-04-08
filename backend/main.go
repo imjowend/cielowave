@@ -60,6 +60,7 @@ func main() {
 	// Carga las variables de entorno necesarias para el cliente de Tidal
 	clientID := os.Getenv("TIDAL_CLIENT_ID")
 	clientSecret := os.Getenv("TIDAL_CLIENT_SECRET")
+	redirectURI := os.Getenv("TIDAL_REDIRECT_URI")
 
 	// Carga el puerto del servidor, con valor por defecto 8080
 	port := os.Getenv("PORT")
@@ -73,6 +74,8 @@ func main() {
 		slog.Error("failed to initialize Tidal client", "err", err)
 		os.Exit(1)
 	}
+
+	userClient := tidal.NewUserClient(clientID, redirectURI)
 
 	// Inicializa el cliente de MusicBrainz
 	mbUserAgent := os.Getenv("MUSICBRAINZ_USER_AGENT")
@@ -90,6 +93,9 @@ func main() {
 	mux.HandleFunc("GET /api/artists", handleSearchArtists(client, mbClient, cache))
 	mux.HandleFunc("GET /api/artists/{id}/tracks", handleGetArtistTracks(client))
 	mux.HandleFunc("POST /api/playlist", handleCreatePlaylist(client))
+	mux.HandleFunc("POST /api/playlist/save", handleSavePlaylist(userClient))
+	mux.HandleFunc("GET /api/auth/tidal/login", handleTidalLogin(userClient))
+	mux.HandleFunc("GET /api/auth/tidal/callback", handleTidalCallback(userClient))
 
 	// Inicia el servidor HTTP con middleware CORS
 	slog.Info("CieloWave backend listening", "port", port)
