@@ -4,9 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -143,5 +146,37 @@ func (uc *UserClient) BuildLoginURL(playlistID string) (string, error) {
 		"state":                 {state},
 	}
 	return tidalLoginURL + "?" + params.Encode(), nil
+}
+
+// overrideAuthURL replaces the token endpoint URL; used in tests only.
+func (uc *UserClient) overrideAuthURL(u string) { uc.authURL = u }
+
+type userTokenResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
+// ExchangeCode exchanges an authorization code for a user access token (PKCE — no client_secret).
+func (uc *UserClient) ExchangeCode(code, codeVerifier string) (string, error) {
+	data := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {uc.clientID},
+		"code":          {code},
+		"redirect_uri":  {uc.redirectURI},
+		"code_verifier": {codeVerifier},
+	}
+	resp, err := uc.httpClient.Post(uc.authURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("token exchange request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, body)
+	}
+	var tr userTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		return "", fmt.Errorf("decode token response: %w", err)
+	}
+	return tr.AccessToken, nil
 }
 

@@ -1,6 +1,9 @@
 package tidal
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -100,5 +103,50 @@ func TestBuildLoginURL_StoresState(t *testing.T) {
 	}
 	if oauthState.CodeVerifier == "" {
 		t.Fatal("expected non-empty CodeVerifier")
+	}
+}
+
+func TestExchangeCode_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		if r.FormValue("grant_type") != "authorization_code" {
+			t.Errorf("unexpected grant_type: %q", r.FormValue("grant_type"))
+		}
+		if r.FormValue("client_secret") != "" {
+			t.Error("client_secret must not be sent in PKCE flow")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"access_token":"user-token-xyz","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	uc := NewUserClient("cid", "https://example.com/cb")
+	uc.overrideAuthURL(srv.URL)
+	token, err := uc.ExchangeCode("auth-code-123", "my-verifier")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "user-token-xyz" {
+		t.Fatalf("expected user-token-xyz, got %q", token)
+	}
+}
+
+func TestExchangeCode_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, `{"error":"invalid_grant"}`)
+	}))
+	defer srv.Close()
+
+	uc := NewUserClient("cid", "https://example.com/cb")
+	uc.overrideAuthURL(srv.URL)
+	_, err := uc.ExchangeCode("bad-code", "verifier")
+	if err == nil {
+		t.Fatal("expected error for 400 response")
 	}
 }
