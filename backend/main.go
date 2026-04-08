@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -299,5 +300,98 @@ func handleCreatePlaylist(c *tidal.TidalClient) http.HandlerFunc {
 			Tracks:     mixed,
 			TotalCount: len(mixed),
 		})
+	}
+}
+
+const frontendBase = "https://cielowave.vercel.app"
+
+func handleSavePlaylist(uc *tidal.UserClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ArtistA string        `json:"artistA"`
+			ArtistB string        `json:"artistB"`
+			Tracks  []tidal.Track `json:"tracks"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.ArtistA == "" || req.ArtistB == "" || len(req.Tracks) == 0 {
+			writeError(w, http.StatusBadRequest, "artistA, artistB, and tracks are required")
+			return
+		}
+		id, err := uc.SavePlaylist(req.ArtistA, req.ArtistB, req.Tracks)
+		if err != nil {
+			slog.Error("save playlist failed", "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to save playlist")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"playlist_id": id})
+	}
+}
+
+func handleTidalLogin(uc *tidal.UserClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		playlistID := r.URL.Query().Get("playlist_id")
+		if playlistID == "" {
+			writeError(w, http.StatusBadRequest, "missing playlist_id")
+			return
+		}
+		loginURL, err := uc.BuildLoginURL(playlistID)
+		if err != nil {
+			slog.Error("build login URL failed", "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to initiate auth")
+			return
+		}
+		http.Redirect(w, r, loginURL, http.StatusFound)
+	}
+}
+
+func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+
+		oauthState, ok := uc.GetState(state)
+		if !ok {
+			slog.Warn("invalid or expired OAuth state", "state", state)
+			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
+			return
+		}
+
+		userToken, err := uc.ExchangeCode(code, oauthState.CodeVerifier)
+		if err != nil {
+			slog.Error("code exchange failed", "err", err)
+			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
+			return
+		}
+
+		playlist, ok := uc.GetPlaylist(oauthState.PlaylistID)
+		if !ok {
+			slog.Warn("playlist not found or expired", "playlist_id", oauthState.PlaylistID)
+			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
+			return
+		}
+
+		title := fmt.Sprintf("%s × %s — CieloWave", playlist.ArtistA, playlist.ArtistB)
+		playlistID, err := uc.CreatePlaylist(userToken, title)
+		if err != nil {
+			slog.Error("create playlist failed", "err", err)
+			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
+			return
+		}
+
+		trackIDs := make([]string, len(playlist.Tracks))
+		for i, t := range playlist.Tracks {
+			trackIDs[i] = t.ID
+		}
+		if err := uc.AddTracks(userToken, playlistID, trackIDs); err != nil {
+			slog.Error("add tracks failed", "err", err)
+			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
+			return
+		}
+
+		uc.DeleteState(state)
+		http.Redirect(w, r, frontendBase+"?saved=true", http.StatusFound)
 	}
 }
