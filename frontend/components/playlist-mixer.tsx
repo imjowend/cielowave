@@ -1,14 +1,30 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Loader2, RefreshCw, Music } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { Loader2, RefreshCw, Music, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { ArtistCombobox } from "@/components/artist-combobox";
 import { TrackList } from "@/components/track-list";
+import { QRSaveTidal } from "@/components/qr-save-tidal";
 import type { Artist, Track, PlaylistResponse } from "@/types";
 
 const API_URL = "";
+
+/**
+ * Generates a unique playlist ID based on track IDs.
+ * Uses a simple hash for consistency across renders.
+ */
+function generatePlaylistId(trackIds: string[]): string {
+  const joined = trackIds.join("-");
+  let hash = 0;
+  for (let i = 0; i < joined.length; i++) {
+    const char = joined.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
 
 export function PlaylistMixer() {
   const [artistA, setArtistA] = useState<Artist | null>(null);
@@ -18,11 +34,32 @@ export function PlaylistMixer() {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [hasGenerated, setHasGenerated] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+
+  // Generate a unique playlist ID based on track IDs for the OAuth state
+  const playlistId = useMemo(() => {
+    if (tracks.length === 0) return null;
+    return generatePlaylistId(tracks.map((t) => t.id));
+  }, [tracks]);
+
+  // Build the Tidal authorization URL with playlist state
+  const tidalAuthUrl = useMemo(() => {
+    if (!playlistId) return null;
+    // Store track IDs in localStorage for retrieval after OAuth callback
+    if (typeof window !== "undefined" && tracks.length > 0) {
+      localStorage.setItem(
+        `cielowave_playlist_${playlistId}`,
+        JSON.stringify(tracks.map((t) => t.id))
+      );
+    }
+    return `${API_URL}/api/auth/tidal/authorize?state=${playlistId}`;
+  }, [playlistId, tracks]);
 
   const generatePlaylist = useCallback(async () => {
     if (!artistA || !artistB) return;
 
     setLoading(true);
+    setShowQR(false); // Reset QR visibility on new generation
     try {
       const response = await fetch(`${API_URL}/api/playlist`, {
         method: "POST",
@@ -134,6 +171,47 @@ export function PlaylistMixer() {
             </Button>
           </div>
           <TrackList tracks={tracks} artistA={artistA} artistB={artistB} />
+
+          {/* Save to TIDAL Section */}
+          {tidalAuthUrl && (
+            <div className="mt-6 flex flex-col gap-4 rounded-lg border border-border bg-card/50 p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-semibold text-foreground">
+                    Guardar en TIDAL
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Añade esta playlist a tu cuenta de TIDAL
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowQR(!showQR)}
+                  >
+                    {showQR ? "Ocultar QR" : "Mostrar QR"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      window.location.href = tidalAuthUrl;
+                    }}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Añadir a mi TIDAL
+                  </Button>
+                </div>
+              </div>
+
+              {/* QR Code for mobile scanning */}
+              {showQR && (
+                <div className="flex justify-center pt-2">
+                  <QRSaveTidal authUrl={tidalAuthUrl} />
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
     </div>
