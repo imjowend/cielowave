@@ -52,7 +52,7 @@ export function PlaylistMixer() {
         JSON.stringify(tracks.map((t) => t.id))
       );
     }
-    return `${API_URL}/api/auth/tidal/authorize?state=${playlistId}`;
+    return `${API_URL}/api/auth/tidal/login?playlist_id=${playlistId}`;
   }, [playlistId, tracks]);
 
   const generatePlaylist = useCallback(async () => {
