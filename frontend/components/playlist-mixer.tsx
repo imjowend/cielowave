@@ -10,6 +10,7 @@ import { QRSaveTidal } from "@/components/qr-save-tidal";
 import type { Artist, Track, PlaylistResponse } from "@/types";
 
 const API_URL = "";
+const PUBLIC_BASE = "https://cielowave.vercel.app";
 
 export function PlaylistMixer() {
   const [artistA, setArtistA] = useState<Artist | null>(null);
@@ -24,7 +25,7 @@ export function PlaylistMixer() {
 
   // Build the Tidal authorization URL with playlist state
   const tidalAuthUrl = playlistId
-    ? `${API_URL}/api/auth/tidal/login?playlist_id=${playlistId}`
+    ? `${PUBLIC_BASE}/api/auth/tidal/login?playlist_id=${playlistId}`
     : null;
 
   const generatePlaylist = useCallback(async () => {
