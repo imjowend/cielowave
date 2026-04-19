@@ -195,7 +195,7 @@ type createPlaylistResponse struct {
 }
 
 // CreatePlaylist creates a new playlist in the user's Tidal collection.
-// Falls back to the legacy endpoint on 403.
+// Falls back to the legacy endpoint on 403 or 404.
 func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"data": map[string]any{
@@ -219,8 +219,8 @@ func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusForbidden {
-		slog.Warn("create playlist returned 403, trying legacy endpoint")
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		slog.Warn("create playlist returned non-2xx, trying legacy endpoint", "status", resp.StatusCode)
 		return uc.createPlaylistLegacy(userToken, title)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
