@@ -170,20 +170,7 @@ func handleCreatePlaylist(c *tidal.TidalClient) http.HandlerFunc {
 		var (
 			tracksA, tracksB []tidal.Track
 			errA, errB       error
-		//	wg               sync.WaitGroup
 		)
-		/*
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				tracksA, errA = c.GetArtistTracks(req.ArtistAID)
-			}()
-			go func() {
-				defer wg.Done()
-				tracksB, errB = c.GetArtistTracks(req.ArtistBID)
-			}()
-			wg.Wait()
-		*/
 		tracksA, errA = c.GetArtistTracks(req.ArtistAID, req.Count*2)
 		tracksB, errB = c.GetArtistTracks(req.ArtistBID, req.Count*2)
 		if errA != nil {

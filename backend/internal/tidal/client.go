@@ -321,48 +321,6 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 	return nil, fmt.Errorf("doRequest: unexpected exit from retry loop")
 }
 
-// GetArtistImage returns the highest-resolution profile image URL for the given artist.
-// Returns ("", nil) if the artist has no profile art.
-func (c *TidalClient) GetArtistImage(artistID string) (string, error) {
-	// Step 1: resolve the artwork ID from the profileArt relationship.
-	resp, err := c.doRequest("GET", "/v2/artists/"+url.PathEscape(artistID)+"/relationships/profileArt?countryCode=US")
-	if err != nil {
-		return "", err
-	}
-	var par profileArtResponse
-	err = json.NewDecoder(resp.Body).Decode(&par)
-	resp.Body.Close()
-	if err != nil {
-		return "", err
-	}
-	if len(par.Data) == 0 {
-		return "", nil
-	}
-	artworkID := par.Data[0].ID
-
-	// Step 2: fetch the artwork and pick the file with the greatest width.
-	resp, err = c.doRequest("GET", "/v2/artworks/"+url.PathEscape(artworkID)+"?countryCode=US")
-	if err != nil {
-		return "", err
-	}
-	var ar artworkResponse
-	err = json.NewDecoder(resp.Body).Decode(&ar)
-	resp.Body.Close()
-	if err != nil {
-		return "", err
-	}
-
-	var best string
-	var bestWidth int
-	for _, f := range ar.Data.Attributes.Files {
-		if f.Meta.Width > bestWidth {
-			bestWidth = f.Meta.Width
-			best = f.Href
-		}
-	}
-	return best, nil
-}
-
 // SearchArtists searches for artists matching query.
 // Calls GET /v2/searchresults/{query}?countryCode=US&include=artists&limit=10
 func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
@@ -410,90 +368,6 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 	}
 
 	return artists, nil
-}
-
-// ResolveArtistByISRC looks up the Tidal artist that owns the given ISRC.
-// Returns (nil, nil) if the ISRC is not found in Tidal.
-// The filter[isrc] query param must be sent with literal brackets (not percent-encoded).
-func (c *TidalClient) ResolveArtistByISRC(isrc string) (*Artist, error) {
-	// Build the path with literal brackets so they reach Tidal unencoded.
-	path := "/v2/tracks?filter[isrc]=" + url.QueryEscape(isrc) + "&countryCode=US&include=artists"
-	resp, err := c.doRequest("GET", path)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("tidal isrc lookup failed (%d): %s", resp.StatusCode, body)
-	}
-
-	var result isrcTracksResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	if len(result.Data) == 0 {
-		return nil, nil
-	}
-	artistRefs := result.Data[0].Relationships.Artists.Data
-	if len(artistRefs) == 0 {
-		return nil, nil
-	}
-	artistID := artistRefs[0].ID
-
-	for _, inc := range result.Included {
-		if inc.Type == "artists" && inc.ID == artistID {
-			var attr artistAttributes
-			if err := json.Unmarshal(inc.Attributes, &attr); err != nil {
-				return nil, err
-			}
-			return &Artist{ID: inc.ID, Name: attr.Name}, nil
-		}
-	}
-	return nil, nil
-}
-
-// SearchArtistByName tries to find a Tidal artist by searching tracks filtered by artist name.
-// This is a best-effort fallback; returns (nil, nil) if the endpoint doesn't exist or yields no results.
-func (c *TidalClient) SearchArtistByName(name string) (*Artist, error) {
-	path := "/v2/tracks?filter[artistName]=" + url.QueryEscape(name) + "&countryCode=US&include=artists"
-	resp, err := c.doRequest("GET", path)
-	if err != nil {
-		return nil, nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil
-	}
-
-	var result isrcTracksResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil
-	}
-
-	if len(result.Data) == 0 {
-		return nil, nil
-	}
-	artistRefs := result.Data[0].Relationships.Artists.Data
-	if len(artistRefs) == 0 {
-		return nil, nil
-	}
-	artistID := artistRefs[0].ID
-
-	for _, inc := range result.Included {
-		if inc.Type == "artists" && inc.ID == artistID {
-			var attr artistAttributes
-			if err := json.Unmarshal(inc.Attributes, &attr); err != nil {
-				slog.Warn("unmarshal artist attributes", "artist_id", inc.ID, "err", err)
-				return nil, nil
-			}
-			return &Artist{ID: inc.ID, Name: attr.Name}, nil
-		}
-	}
-	return nil, nil
 }
 
 // GetArtistTracks returns tracks for the given artist, paginating as needed.
