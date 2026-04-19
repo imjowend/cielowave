@@ -181,8 +181,12 @@ func TestSortArtistsByQuery_StartsWithFirst(t *testing.T) {
 		{ID: "3", Name: "Daftside"},
 	}
 	sortArtistsByQuery(artists, "daft")
-	if artists[0].Name != "Daft Punk" && artists[0].Name != "Daftside" {
-		t.Errorf("expected starts-with match first, got %q", artists[0].Name)
+	// Both prefix-matching artists must precede the non-matching one.
+	for _, pos := range []int{0, 1} {
+		name := strings.ToLower(artists[pos].Name)
+		if !strings.HasPrefix(name, "daft") {
+			t.Errorf("expected artists[%d] to start with 'daft', got %q", pos, artists[pos].Name)
+		}
 	}
 	if artists[2].Name != "Stardust" {
 		t.Errorf("expected non-match last, got %q", artists[2].Name)

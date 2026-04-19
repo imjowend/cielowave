@@ -95,6 +95,8 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // queryMatchScore returns how many leading characters of q match as a prefix
 // of name (case-insensitive). A full match scores len(q); no match scores 0.
+// Non-prefix matches score 0 — Tidal's API already ranks by relevance, so this
+// function only promotes prefix-matching artists to the front of those results.
 func queryMatchScore(name, q string) int {
 	nl := strings.ToLower(name)
 	ql := strings.ToLower(q)
