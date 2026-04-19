@@ -17,6 +17,8 @@ import (
 const (
 	tidalAuthURL     = "https://auth.tidal.com/v1/oauth2/token"
 	tidalOpenAPIBase = "https://openapi.tidal.com"
+	tidalV1Base      = "https://api.tidal.com"
+	tidalV1Token     = "CzET4vdadNUFQ5JU"
 )
 
 // TidalClient is an authenticated client for the Tidal Open API v2.
@@ -44,25 +46,15 @@ type jsonAPIResource struct {
 	Attributes json.RawMessage `json:"attributes"`
 }
 
-// searchResponse models GET /v2/searchresults/{query}?include=artists.
-type searchResponse struct {
-	Data struct {
-		Relationships struct {
-			Artists struct {
-				Data []struct {
-					ID string `json:"id"`
-				} `json:"data"`
-			} `json:"artists"`
-		} `json:"relationships"`
-	} `json:"data"`
-	Included []jsonAPIResource `json:"included"`
-}
-
-type artistAttributes struct {
-	Name       string `json:"name"`
-	ImageLinks []struct {
-		Href string `json:"href"`
-	} `json:"imageLinks"`
+// v1SearchResponse models GET /v1/search?types=ARTISTS.
+type v1SearchResponse struct {
+	Artists struct {
+		Items []struct {
+			ID      int    `json:"id"`
+			Name    string `json:"name"`
+			Picture string `json:"picture"`
+		} `json:"items"`
+	} `json:"artists"`
 }
 
 // tracksRelationshipResponse models GET /v2/artists/{id}/relationships/tracks?include=tracks.
@@ -321,11 +313,18 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 	return nil, fmt.Errorf("doRequest: unexpected exit from retry loop")
 }
 
-// SearchArtists searches for artists matching query.
-// Calls GET /v2/searchresults/{query}?countryCode=US&include=artists&limit=10
+// SearchArtists searches for artists matching query using the Tidal v1 API.
+// Calls GET /v1/search?query={query}&types=ARTISTS&limit=10&countryCode=US
 func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
-	path := "/v2/searchresults/" + url.PathEscape(query) + "?countryCode=US&include=artists&limit=10"
-	resp, err := c.doRequest("GET", path)
+	reqURL := tidalV1Base + "/v1/search?query=" + url.QueryEscape(query) + "&types=ARTISTS&limit=10&countryCode=US"
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Tidal-Token", tidalV1Token)
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -336,35 +335,18 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 		return nil, fmt.Errorf("search failed (%d): %s", resp.StatusCode, body)
 	}
 
-	var sr searchResponse
+	var sr v1SearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
 		return nil, err
 	}
 
-	includedByID := make(map[string]jsonAPIResource, len(sr.Included))
-	for _, res := range sr.Included {
-		if res.Type == "artists" {
-			includedByID[res.ID] = res
-		}
-	}
-
-	artists := make([]Artist, 0, len(sr.Data.Relationships.Artists.Data))
-	for _, ref := range sr.Data.Relationships.Artists.Data {
-		res, ok := includedByID[ref.ID]
-		if !ok {
-			continue
-		}
-		var attr artistAttributes
-		if err := json.Unmarshal(res.Attributes, &attr); err != nil {
-			slog.Warn("unmarshal artist attributes", "artist_id", res.ID, "err", err)
-			continue
-		}
+	artists := make([]Artist, 0, len(sr.Artists.Items))
+	for _, item := range sr.Artists.Items {
 		var imgURL string
-		if len(attr.ImageLinks) > 0 {
-			// imageLinks[0] is the primary image per Tidal's search sideload.
-			imgURL = attr.ImageLinks[0].Href
+		if item.Picture != "" {
+			imgURL = "https://resources.tidal.com/images/" + strings.ReplaceAll(item.Picture, "-", "/") + "/320x320.jpg"
 		}
-		artists = append(artists, Artist{ID: res.ID, Name: attr.Name, ImageURL: imgURL})
+		artists = append(artists, Artist{ID: strconv.Itoa(item.ID), Name: item.Name, ImageURL: imgURL})
 	}
 
 	return artists, nil
