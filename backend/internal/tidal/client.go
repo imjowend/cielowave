@@ -15,14 +15,15 @@ import (
 )
 
 const (
-	authURL = "https://auth.tidal.com/v1/oauth2/token"
-	apiBase = "https://openapi.tidal.com"
+	tidalAuthURL     = "https://auth.tidal.com/v1/oauth2/token"
+	tidalOpenAPIBase = "https://openapi.tidal.com"
 )
 
 // TidalClient is an authenticated client for the Tidal Open API v2.
 type TidalClient struct {
 	clientID     string
 	clientSecret string
+	apiBase      string
 	httpClient   *http.Client
 	mu           sync.Mutex
 	accessToken  string
@@ -188,6 +189,7 @@ func NewTidalClient(clientID, clientSecret string) (*TidalClient, error) {
 	c := &TidalClient{
 		clientID:     clientID,
 		clientSecret: clientSecret,
+		apiBase:      tidalOpenAPIBase,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -201,11 +203,25 @@ func NewTidalClient(clientID, clientSecret string) (*TidalClient, error) {
 	return c, nil
 }
 
+// NewTidalClientForTest creates a TidalClient with a pre-set token for testing.
+// It does not call the real Tidal auth endpoint.
+func NewTidalClientForTest(apiBase, token string) *TidalClient {
+	return &TidalClient{
+		apiBase:     apiBase,
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		accessToken: token,
+		tokenExpiry: time.Now().Add(time.Hour),
+	}
+}
+
+// OverrideAPIBase replaces the API base URL; used in tests only.
+func (c *TidalClient) OverrideAPIBase(u string) { c.apiBase = u }
+
 func (c *TidalClient) refreshToken() error {
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
 
-	req, err := http.NewRequest("POST", authURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", tidalAuthURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return err
 	}
@@ -266,7 +282,7 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 			return nil, err
 		}
 
-		fullURL := apiBase + path
+		fullURL := c.apiBase + path
 		slog.Debug("doRequest", "method", method, "url", fullURL, "attempt", attempt+1)
 
 		req, err := http.NewRequest(method, fullURL, nil)
