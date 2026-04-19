@@ -1,53 +1,19 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
-	"sync"
-	"time"
 
-	"cielowave/backend/internal/musicbrainz"
 	"cielowave/backend/internal/playlist"
 	"cielowave/backend/internal/tidal"
 
 	"github.com/joho/godotenv"
 )
-
-// artistCache is an in-memory TTL cache for resolved Tidal artists.
-type artistCache struct {
-	mu      sync.Mutex
-	entries map[string]artistCacheEntry
-}
-
-type artistCacheEntry struct {
-	artist    tidal.Artist
-	expiresAt time.Time
-}
-
-func newArtistCache() *artistCache {
-	return &artistCache{entries: make(map[string]artistCacheEntry)}
-}
-
-func (ac *artistCache) get(key string) (tidal.Artist, bool) {
-	ac.mu.Lock()
-	defer ac.mu.Unlock()
-	e, ok := ac.entries[key]
-	if !ok || time.Now().After(e.expiresAt) {
-		return tidal.Artist{}, false
-	}
-	return e.artist, true
-}
-
-func (ac *artistCache) set(key string, artist tidal.Artist) {
-	ac.mu.Lock()
-	defer ac.mu.Unlock()
-	ac.entries[key] = artistCacheEntry{artist: artist, expiresAt: time.Now().Add(time.Hour)}
-}
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
@@ -82,20 +48,10 @@ func main() {
 
 	userClient := tidal.NewUserClient(clientID, redirectURI)
 
-	// Inicializa el cliente de MusicBrainz
-	mbUserAgent := os.Getenv("MUSICBRAINZ_USER_AGENT")
-	if mbUserAgent == "" {
-		mbUserAgent = "CieloWave/0.1.0 (noreply@example.com)"
-	}
-	mbClient := musicbrainz.NewMusicBrainzClient(mbUserAgent)
-
-	// Caché de artistas resueltos (1 hora TTL)
-	cache := newArtistCache()
-
 	// Configura las rutas del servidor HTTP
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
-	mux.HandleFunc("GET /api/artists", handleSearchArtists(client, mbClient, cache))
+	mux.HandleFunc("GET /api/artists", handleSearchArtists(client))
 	mux.HandleFunc("GET /api/artists/{id}/tracks", handleGetArtistTracks(client))
 	mux.HandleFunc("POST /api/playlist", handleCreatePlaylist(client))
 	mux.HandleFunc("POST /api/playlist/save", handleSavePlaylist(userClient))
@@ -137,7 +93,28 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient, cache *artistCache) http.HandlerFunc {
+// queryMatchScore returns how many leading characters of q match as a prefix
+// of name (case-insensitive). A full match scores len(q); no match scores 0.
+func queryMatchScore(name, q string) int {
+	nl := strings.ToLower(name)
+	ql := strings.ToLower(q)
+	for i := len(ql); i > 0; i-- {
+		if strings.HasPrefix(nl, ql[:i]) {
+			return i
+		}
+	}
+	return 0
+}
+
+func sortArtistsByQuery(artists []tidal.Artist, q string) {
+	sort.SliceStable(artists, func(i, j int) bool {
+		si := queryMatchScore(artists[i].Name, q)
+		sj := queryMatchScore(artists[j].Name, q)
+		return si > sj
+	})
+}
+
+func handleSearchArtists(c *tidal.TidalClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		if q == "" {
@@ -145,106 +122,16 @@ func handleSearchArtists(c *tidal.TidalClient, mb *musicbrainz.MusicBrainzClient
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
-
-		mbResults, err := mb.SearchArtists(q)
+		artists, err := c.SearchArtists(q)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "musicbrainz search failed: "+err.Error())
+			writeError(w, http.StatusBadGateway, "tidal search failed: "+err.Error())
 			return
 		}
 
-		// Resolve Tidal IDs in parallel, max 2 concurrent goroutines (respects MB rate limit).
-		const maxConcurrent = 2
-		const maxResolved = 3
-		sem := make(chan struct{}, maxConcurrent)
+		sortArtistsByQuery(artists, q)
 
-		type resolveResult struct {
-			artist *tidal.Artist
-			idx    int
-		}
-		resultCh := make(chan resolveResult, len(mbResults))
-
-		for i, mbr := range mbResults {
-			go func(i int, name, mbid string) {
-				select {
-				case sem <- struct{}{}:
-					defer func() { <-sem }()
-				case <-ctx.Done():
-					resultCh <- resolveResult{nil, i}
-					return
-				}
-
-				cacheKey := strings.ToLower(strings.TrimSpace(name))
-				if cached, ok := cache.get(cacheKey); ok {
-					slog.Debug("cache hit for artist", "name", name)
-					resultCh <- resolveResult{&cached, i}
-					return
-				}
-
-				isrc, err := mb.GetArtistISRC(mbid)
-				if err != nil || isrc == "" {
-					slog.Warn("no ISRC for artist", "mbid", mbid, "name", name, "err", err)
-					// Fallback: search by artist name directly in Tidal
-					artist, _ := c.SearchArtistByName(name)
-					if artist != nil {
-						imgURL, _ := c.GetArtistImage(artist.ID)
-						if imgURL != "" {
-							artist.ImageURL = imgURL
-						}
-						cache.set(cacheKey, *artist)
-					}
-					resultCh <- resolveResult{artist, i}
-					return
-				}
-
-				artist, err := c.ResolveArtistByISRC(isrc)
-				if err != nil || artist == nil {
-					slog.Warn("tidal resolve failed", "isrc", isrc, "err", err)
-					resultCh <- resolveResult{nil, i}
-					return
-				}
-
-				imgURL, _ := c.GetArtistImage(artist.ID)
-				if imgURL != "" {
-					artist.ImageURL = imgURL
-				}
-				cache.set(cacheKey, *artist)
-				resultCh <- resolveResult{artist, i}
-			}(i, mbr.Name, mbr.MBID)
-		}
-
-		// Collect results: stop early once maxResolved artists are found, all goroutines finish, or timeout.
-		results := make([]*tidal.Artist, len(mbResults))
-		resolved := 0
-		received := 0
-		total := len(mbResults)
-
-	collect:
-		for received < total {
-			select {
-			case res := <-resultCh:
-				received++
-				results[res.idx] = res.artist
-				if res.artist != nil {
-					resolved++
-					if resolved >= maxResolved {
-						break collect
-					}
-				}
-			case <-ctx.Done():
-				break collect
-			}
-		}
-
-		seen := make(map[string]bool)
-		artists := make([]tidal.Artist, 0, maxResolved)
-		for _, a := range results {
-			if a == nil || seen[a.ID] {
-				continue
-			}
-			seen[a.ID] = true
-			artists = append(artists, *a)
+		if len(artists) > 5 {
+			artists = artists[:5]
 		}
 
 		writeJSON(w, http.StatusOK, artists)
