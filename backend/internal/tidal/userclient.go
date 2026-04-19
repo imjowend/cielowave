@@ -152,7 +152,6 @@ func (uc *UserClient) OverrideAuthURL(u string) { uc.authURL = u }
 // OverrideAPIBase replaces the API base URL; used in tests only.
 func (uc *UserClient) OverrideAPIBase(u string) { uc.apiBase = u }
 
-
 type userTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
@@ -232,7 +231,7 @@ func (uc *UserClient) AddTracks(userToken, playlistID string, trackIDs []string)
 	}
 	body, _ := json.Marshal(map[string]any{"data": items})
 
-	endpoint := uc.apiBase + "/v2/my-collection/playlists/" + url.PathEscape(playlistID) + "/relationships/items"
+	endpoint := uc.apiBase + "/v2/playlists/" + url.PathEscape(playlistID) + "/relationships/items"
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -252,4 +251,3 @@ func (uc *UserClient) AddTracks(userToken, playlistID string, trackIDs []string)
 	}
 	return nil
 }
-
