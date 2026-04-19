@@ -403,6 +403,7 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 		}
 		var imgURL string
 		if len(attr.ImageLinks) > 0 {
+			// imageLinks[0] is the primary image per Tidal's search sideload.
 			imgURL = attr.ImageLinks[0].Href
 		}
 		artists = append(artists, Artist{ID: res.ID, Name: attr.Name, ImageURL: imgURL})
