@@ -21,18 +21,18 @@ export default function SuccessPage() {
 
         <div className="flex flex-col gap-2">
           <h1 className="text-2xl font-bold text-foreground">
-            ¡Playlist añadida!
+            ¡Tu mezcla está lista!
           </h1>
           <p className="text-muted-foreground">
-            Tu playlist CieloWave ha sido guardada exitosamente en tu cuenta de
-            TIDAL. Ya puedes escucharla desde la app.
+            Ya puedes disfrutar tu playlist CieloWave en TIDAL. Abre la app y 
+            déjate llevar por la música.
           </p>
         </div>
 
         <Button asChild size="lg" className="mt-4">
           <Link href="/">
             <Home className="h-5 w-5" />
-            Volver al inicio
+            Crear otra mezcla
           </Link>
         </Button>
       </div>

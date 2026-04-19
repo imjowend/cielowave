@@ -139,7 +139,7 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
                 <span className="truncate font-medium">{value.name}</span>
               </div>
             ) : (
-              <span className="text-muted-foreground">Search artist...</span>
+              <span className="text-muted-foreground">Buscar artista...</span>
             )}
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
@@ -147,30 +147,30 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
           <Command shouldFilter={false}>
             <CommandInput
-              placeholder="Search artist..."
+              placeholder="Escribe el nombre..."
               value={search}
               onValueChange={setSearch}
-              aria-label={`Search for ${label}`}
+              aria-label={`Buscar ${label}`}
               aria-describedby={`${label}-hint`}
             />
             <span id={`${label}-hint`} className="sr-only">
-              Type at least {MIN_SEARCH_LENGTH} characters to search
+              Escribe al menos {MIN_SEARCH_LENGTH} caracteres para buscar
             </span>
             <CommandList aria-busy={isLoading} aria-live="polite">
               {isLoading ? (
                 <div className="flex flex-col items-center gap-3 py-6 text-center">
                   <Spinner size="md" />
                   <div className="text-sm text-muted-foreground">
-                    Searching in Tidal catalog...
+                    Buscando en el catálogo de TIDAL...
                   </div>
                   {showSlowMessage && (
                     <div className="text-xs text-muted-foreground/70">
-                      Resolving artists, this may take a moment...
+                      Encontrando artistas, un momento...
                     </div>
                   )}
                 </div>
               ) : debouncedSearchTerm.trim().length >= MIN_SEARCH_LENGTH && artists.length === 0 ? (
-                <CommandEmpty>No se encontraron artistas.</CommandEmpty>
+                <CommandEmpty>No encontramos ese artista. Intenta con otro nombre.</CommandEmpty>
               ) : (
                 <CommandGroup>
                   {artists.map((artist) => (

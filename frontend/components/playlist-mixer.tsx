@@ -94,12 +94,12 @@ export function PlaylistMixer() {
       <section className="flex flex-col gap-4">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <ArtistCombobox
-            label="Artist A"
+            label="Primer artista"
             value={artistA}
             onSelect={setArtistA}
           />
           <ArtistCombobox
-            label="Artist B"
+            label="Segundo artista"
             value={artistB}
             onSelect={setArtistB}
           />
@@ -110,7 +110,7 @@ export function PlaylistMixer() {
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <label className="text-sm font-medium text-muted-foreground">
-            Songs in playlist
+            Canciones en tu playlist
           </label>
           <span className="text-lg font-semibold text-primary">{songCount}</span>
         </div>
@@ -138,12 +138,12 @@ export function PlaylistMixer() {
         {loading ? (
           <>
             <Loader2 className="h-5 w-5 animate-spin" />
-            Generating...
+            Creando tu mezcla...
           </>
         ) : (
           <>
             <Music className="h-5 w-5" />
-            Generate Playlist
+            Crear mi playlist
           </>
         )}
       </Button>
@@ -154,10 +154,10 @@ export function PlaylistMixer() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-foreground text-balance">
-                Your CieloWave — {artistA.name} × {artistB.name}
+                Tu CieloWave — {artistA.name} × {artistB.name}
               </h2>
               <p className="text-sm text-muted-foreground">
-                {totalCount} tracks
+                {totalCount} canciones listas para ti
               </p>
             </div>
             <Button
@@ -167,7 +167,7 @@ export function PlaylistMixer() {
               disabled={loading}
             >
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-              Regenerate
+              Mezclar de nuevo
             </Button>
           </div>
           <TrackList tracks={tracks} artistA={artistA} artistB={artistB} />
@@ -178,10 +178,10 @@ export function PlaylistMixer() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="font-semibold text-foreground">
-                    Guardar en TIDAL
+                    Llévala contigo
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    Añade esta playlist a tu cuenta de TIDAL
+                    Guarda tu mezcla en TIDAL y escúchala donde quieras
                   </p>
                 </div>
                 <div className="flex gap-2">
