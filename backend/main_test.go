@@ -173,3 +173,100 @@ func TestHandleTidalCallback_Success(t *testing.T) {
 		t.Fatalf("expected saved=true, got %q", w.Header().Get("Location"))
 	}
 }
+
+func TestSortArtistsByQuery_StartsWithFirst(t *testing.T) {
+	artists := []tidal.Artist{
+		{ID: "1", Name: "Stardust"},
+		{ID: "2", Name: "Daft Punk"},
+		{ID: "3", Name: "Daftside"},
+	}
+	sortArtistsByQuery(artists, "daft")
+	// Both prefix-matching artists must precede the non-matching one.
+	for _, pos := range []int{0, 1} {
+		name := strings.ToLower(artists[pos].Name)
+		if !strings.HasPrefix(name, "daft") {
+			t.Errorf("expected artists[%d] to start with 'daft', got %q", pos, artists[pos].Name)
+		}
+	}
+	if artists[2].Name != "Stardust" {
+		t.Errorf("expected non-match last, got %q", artists[2].Name)
+	}
+}
+
+func TestSortArtistsByQuery_CaseInsensitive(t *testing.T) {
+	artists := []tidal.Artist{
+		{ID: "1", Name: "miles davis"},
+		{ID: "2", Name: "Miles Davis"},
+	}
+	sortArtistsByQuery(artists, "MILES")
+	// Both match; original order preserved by SliceStable.
+	if artists[0].Name != "miles davis" {
+		t.Errorf("expected stable sort to preserve order of equal elements, got %q", artists[0].Name)
+	}
+}
+
+func TestHandleSearchArtists_ReturnsSortedTop5(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ids := []string{"1", "2", "3", "4", "5", "6"}
+		data := make([]map[string]string, len(ids))
+		included := make([]map[string]any, len(ids))
+		names := []string{"Something Else", "Bad Bunny Fan", "Bad Bunny", "Bad Bunny Club", "Bad Bunnies", "Bad Bunny Remix"}
+		for i, id := range ids {
+			data[i] = map[string]string{"id": id, "type": "artists"}
+			included[i] = map[string]any{
+				"id":   id,
+				"type": "artists",
+				"attributes": map[string]any{
+					"name":       names[i],
+					"imageLinks": []any{map[string]string{"href": "https://img/" + id}},
+				},
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"relationships": map[string]any{
+					"artists": map[string]any{"data": data},
+				},
+			},
+			"included": included,
+		})
+	}))
+	defer srv.Close()
+
+	c := tidal.NewTidalClientForTest(srv.URL, "test-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/artists?q=bad+bunny", nil)
+	w := httptest.NewRecorder()
+	handleSearchArtists(c)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var artists []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&artists); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(artists) != 5 {
+		t.Fatalf("expected 5 artists, got %d", len(artists))
+	}
+	// First result must start with "bad bunny" (case-insensitive).
+	first := artists[0]["name"].(string)
+	if !strings.HasPrefix(strings.ToLower(first), "bad bunny") {
+		t.Errorf("expected first result to start with 'bad bunny', got %q", first)
+	}
+	// "Something Else" must not appear (it's 6th and doesn't match prefix).
+	for _, a := range artists {
+		if a["name"] == "Something Else" {
+			t.Error("'Something Else' should not appear in top 5")
+		}
+	}
+}
+
+func TestHandleSearchArtists_MissingQuery(t *testing.T) {
+	c := tidal.NewTidalClientForTest("http://unused", "tok")
+	req := httptest.NewRequest(http.MethodGet, "/api/artists", nil)
+	w := httptest.NewRecorder()
+	handleSearchArtists(c)(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
