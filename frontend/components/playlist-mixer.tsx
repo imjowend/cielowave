@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback } from "react";
 import { Loader2, RefreshCw, Music, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -10,21 +10,7 @@ import { QRSaveTidal } from "@/components/qr-save-tidal";
 import type { Artist, Track, PlaylistResponse } from "@/types";
 
 const API_URL = "";
-
-/**
- * Generates a unique playlist ID based on track IDs.
- * Uses a simple hash for consistency across renders.
- */
-function generatePlaylistId(trackIds: string[]): string {
-  const joined = trackIds.join("-");
-  let hash = 0;
-  for (let i = 0; i < joined.length; i++) {
-    const char = joined.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return Math.abs(hash).toString(36);
-}
+const PUBLIC_BASE = "https://cielowave.vercel.app";
 
 export function PlaylistMixer() {
   const [artistA, setArtistA] = useState<Artist | null>(null);
@@ -35,31 +21,19 @@ export function PlaylistMixer() {
   const [loading, setLoading] = useState(false);
   const [hasGenerated, setHasGenerated] = useState(false);
   const [showQR, setShowQR] = useState(false);
-
-  // Generate a unique playlist ID based on track IDs for the OAuth state
-  const playlistId = useMemo(() => {
-    if (tracks.length === 0) return null;
-    return generatePlaylistId(tracks.map((t) => t.id));
-  }, [tracks]);
+  const [playlistId, setPlaylistId] = useState<string | null>(null);
 
   // Build the Tidal authorization URL with playlist state
-  const tidalAuthUrl = useMemo(() => {
-    if (!playlistId) return null;
-    // Store track IDs in localStorage for retrieval after OAuth callback
-    if (typeof window !== "undefined" && tracks.length > 0) {
-      localStorage.setItem(
-        `cielowave_playlist_${playlistId}`,
-        JSON.stringify(tracks.map((t) => t.id))
-      );
-    }
-    return `${API_URL}/api/auth/tidal/login?playlist_id=${playlistId}`;
-  }, [playlistId, tracks]);
+  const tidalAuthUrl = playlistId
+    ? `${PUBLIC_BASE}/api/auth/tidal/login?playlist_id=${playlistId}`
+    : null;
 
   const generatePlaylist = useCallback(async () => {
     if (!artistA || !artistB) return;
 
     setLoading(true);
     setShowQR(false); // Reset QR visibility on new generation
+    setPlaylistId(null); // Reset playlist ID for new generation
     try {
       const response = await fetch(`${API_URL}/api/playlist`, {
         method: "POST",
@@ -78,6 +52,32 @@ export function PlaylistMixer() {
         setTracks(data.tracks || []);
         setTotalCount(data.totalCount);
         setHasGenerated(true);
+
+        // Save playlist to backend and get the server-generated ID
+        try {
+          const saveResponse = await fetch(`${API_URL}/api/playlist/save`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              artistA: artistA.name,
+              artistB: artistB.name,
+              tracks: data.tracks,
+            }),
+          });
+
+          if (saveResponse.ok) {
+            const saveData = await saveResponse.json();
+            setPlaylistId(saveData.playlist_id);
+          } else {
+            console.error("Failed to save playlist:", saveResponse.statusText);
+            setPlaylistId(null);
+          }
+        } catch (saveError) {
+          console.error("Failed to save playlist:", saveError);
+          setPlaylistId(null);
+        }
       }
     } catch (error) {
       console.error("Failed to generate playlist:", error);
