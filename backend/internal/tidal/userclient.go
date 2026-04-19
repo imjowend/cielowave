@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,7 +18,6 @@ const (
 	tidalLoginURL    = "https://login.tidal.com/authorize"
 	tidalUserAuthURL = "https://auth.tidal.com/v1/oauth2/token"
 	tidalAPIBase     = "https://openapi.tidal.com"
-	tidalLegacyBase  = "https://listen.tidal.com"
 	tidalScopes      = "playlists.read playlists.write collection.read collection.write"
 )
 
@@ -29,7 +27,6 @@ type UserClient struct {
 	redirectURI string
 	authURL     string
 	apiBase     string
-	legacyBase  string
 	httpClient  *http.Client
 	playlists   *PlaylistStore
 	states      *OAuthStateStore
@@ -42,7 +39,6 @@ func NewUserClient(clientID, redirectURI string) *UserClient {
 		redirectURI: redirectURI,
 		authURL:     tidalUserAuthURL,
 		apiBase:     tidalAPIBase,
-		legacyBase:  tidalLegacyBase,
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
 		playlists:   newPlaylistStore(),
 		states:      newOAuthStateStore(),
@@ -156,8 +152,6 @@ func (uc *UserClient) OverrideAuthURL(u string) { uc.authURL = u }
 // OverrideAPIBase replaces the API base URL; used in tests only.
 func (uc *UserClient) OverrideAPIBase(u string) { uc.apiBase = u }
 
-// OverrideLegacyBase replaces the legacy base URL; used in tests only.
-func (uc *UserClient) OverrideLegacyBase(u string) { uc.legacyBase = u }
 
 type userTokenResponse struct {
 	AccessToken string `json:"access_token"`
@@ -194,8 +188,7 @@ type createPlaylistResponse struct {
 	} `json:"data"`
 }
 
-// CreatePlaylist creates a new playlist in the user's Tidal collection.
-// Falls back to the legacy endpoint on 403 or 404.
+// CreatePlaylist creates a new public playlist in the user's Tidal account.
 func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"data": map[string]any{
@@ -203,10 +196,11 @@ func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 			"attributes": map[string]string{
 				"name":        title,
 				"description": "Playlist generada con CieloWave",
+				"accessType":  "PUBLIC",
 			},
 		},
 	})
-	req, err := http.NewRequest(http.MethodPost, uc.apiBase+"/v2/my-collection/playlists", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, uc.apiBase+"/v2/playlists?countryCode=US", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -219,10 +213,6 @@ func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
-		slog.Warn("create playlist returned non-2xx, trying legacy endpoint", "status", resp.StatusCode)
-		return uc.createPlaylistLegacy(userToken, title)
-	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("create playlist failed (%d): %s", resp.StatusCode, b)
@@ -230,40 +220,6 @@ func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 	var result createPlaylistResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode create playlist response: %w", err)
-	}
-	return result.Data.ID, nil
-}
-
-func (uc *UserClient) createPlaylistLegacy(userToken, title string) (string, error) {
-	body, _ := json.Marshal(map[string]any{
-		"data": map[string]any{
-			"type": "playlists",
-			"attributes": map[string]string{
-				"name":        title,
-				"description": "Playlist generada con CieloWave",
-			},
-		},
-	})
-	req, err := http.NewRequest(http.MethodPost, uc.legacyBase+"/v2/my-collection/playlists/folders/create-playlist", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+userToken)
-	req.Header.Set("Content-Type", "application/vnd.api+json")
-
-	resp, err := uc.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("create playlist legacy: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("create playlist legacy failed (%d): %s", resp.StatusCode, b)
-	}
-	var result createPlaylistResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode legacy response: %w", err)
 	}
 	return result.Data.ID, nil
 }

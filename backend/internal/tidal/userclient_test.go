@@ -158,6 +158,12 @@ func TestCreatePlaylist_Success(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
+		if r.URL.Path != "/v2/playlists" {
+			t.Errorf("unexpected path: %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("countryCode") != "US" {
+			t.Errorf("missing countryCode=US query param")
+		}
 		if r.Header.Get("Authorization") != "Bearer user-token" {
 			t.Errorf("unexpected Authorization: %q", r.Header.Get("Authorization"))
 		}
@@ -177,34 +183,6 @@ func TestCreatePlaylist_Success(t *testing.T) {
 	}
 }
 
-func TestCreatePlaylist_403FallbackToLegacy(t *testing.T) {
-	legacyCalled := false
-	legacy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		legacyCalled = true
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, `{"data":{"id":"legacy-playlist","type":"playlists"}}`)
-	}))
-	defer legacy.Close()
-
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer primary.Close()
-
-	uc := NewUserClient("cid", "https://example.com/cb")
-	uc.OverrideAPIBase(primary.URL)
-	uc.OverrideLegacyBase(legacy.URL)
-	id, err := uc.CreatePlaylist("user-token", "title")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !legacyCalled {
-		t.Fatal("expected legacy endpoint to be called on 403")
-	}
-	if id != "legacy-playlist" {
-		t.Fatalf("expected legacy-playlist, got %q", id)
-	}
-}
 
 func TestAddTracks_Success(t *testing.T) {
 	var gotBody []byte
