@@ -364,9 +364,9 @@ func (c *TidalClient) GetArtistImage(artistID string) (string, error) {
 }
 
 // SearchArtists searches for artists matching query.
-// Calls GET /v2/searchresults/{query}?countryCode=US&include=artists
+// Calls GET /v2/searchresults/{query}?countryCode=US&include=artists&limit=10
 func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
-	path := "/v2/searchresults/" + url.PathEscape(query) + "?countryCode=US&include=artists"
+	path := "/v2/searchresults/" + url.PathEscape(query) + "?countryCode=US&include=artists&limit=10"
 	resp, err := c.doRequest("GET", path)
 	if err != nil {
 		return nil, err
@@ -383,7 +383,6 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 		return nil, err
 	}
 
-	// Index included resources by ID for O(1) lookup.
 	includedByID := make(map[string]jsonAPIResource, len(sr.Included))
 	for _, res := range sr.Included {
 		if res.Type == "artists" {
@@ -402,22 +401,12 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 			slog.Warn("unmarshal artist attributes", "artist_id", res.ID, "err", err)
 			continue
 		}
-		artists = append(artists, Artist{ID: res.ID, Name: attr.Name})
+		var imgURL string
+		if len(attr.ImageLinks) > 0 {
+			imgURL = attr.ImageLinks[0].Href
+		}
+		artists = append(artists, Artist{ID: res.ID, Name: attr.Name, ImageURL: imgURL})
 	}
-
-	// Fetch profile images in parallel.
-	var wg sync.WaitGroup
-	for i := range artists {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			imgURL, err := c.GetArtistImage(artists[i].ID)
-			if err == nil {
-				artists[i].ImageURL = imgURL
-			}
-		}(i)
-	}
-	wg.Wait()
 
 	return artists, nil
 }
