@@ -18,7 +18,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Spinner } from "@/components/ui/spinner";
+import { useDebounce } from "@/hooks/useDebounce";
 import type { Artist } from "@/types";
+
+// Maximum number of artist results to display
+const MAX_RESULTS = 5;
+// Minimum characters required to trigger a search
+const MIN_SEARCH_LENGTH = 3;
 
 interface ArtistComboboxProps {
   label: string;
@@ -32,65 +39,65 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [artists, setArtists] = useState<Artist[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [showSlowMessage, setShowSlowMessage] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const slowMessageRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const searchArtists = useCallback(async (query: string) => {
-    if (!query.trim() || query.trim().length < 2) {
-      setArtists([]);
-      setLoading(false);
-      setShowSlowMessage(false);
-      if (slowMessageRef.current) {
-        clearTimeout(slowMessageRef.current);
-      }
-      return;
-    }
+  // Debounce the search term with 300ms delay
+  const debouncedSearchTerm = useDebounce(search, 300);
 
-    setLoading(true);
-    setShowSlowMessage(false);
-
-    // Show "slow search" message after 2 seconds
-    slowMessageRef.current = setTimeout(() => {
-      setShowSlowMessage(true);
-    }, 2000);
-
-    try {
-      const response = await fetch(
-        `${API_URL}/api/artists?q=${encodeURIComponent(query)}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setArtists(data || []);
-      }
-    } catch (error) {
-      console.error("Failed to search artists:", error);
-      setArtists([]);
-    } finally {
-      setLoading(false);
-      setShowSlowMessage(false);
-      if (slowMessageRef.current) {
-        clearTimeout(slowMessageRef.current);
-      }
-    }
-  }, []);
-
+  // Perform API search when debounced search term changes
   useEffect(() => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
+    const searchArtists = async () => {
+      // Only search if debounced term meets minimum length requirement
+      if (!debouncedSearchTerm.trim() || debouncedSearchTerm.trim().length < MIN_SEARCH_LENGTH) {
+        setArtists([]);
+        setIsLoading(false);
+        setShowSlowMessage(false);
+        if (slowMessageRef.current) {
+          clearTimeout(slowMessageRef.current);
+        }
+        return;
+      }
 
-    debounceRef.current = setTimeout(() => {
-      searchArtists(search);
-    }, 500);
+      setIsLoading(true);
+      setShowSlowMessage(false);
 
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
+      // Show "slow search" message after 2 seconds
+      slowMessageRef.current = setTimeout(() => {
+        setShowSlowMessage(true);
+      }, 2000);
+
+      try {
+        const response = await fetch(
+          `${API_URL}/api/artists?q=${encodeURIComponent(debouncedSearchTerm)}`
+        );
+        if (response.ok) {
+          const data: Artist[] = await response.json();
+          // Limit results to MAX_RESULTS (prepared for when backend returns more)
+          setArtists((data || []).slice(0, MAX_RESULTS));
+        }
+      } catch (error) {
+        console.error("Failed to search artists:", error);
+        setArtists([]);
+      } finally {
+        setIsLoading(false);
+        setShowSlowMessage(false);
+        if (slowMessageRef.current) {
+          clearTimeout(slowMessageRef.current);
+        }
       }
     };
-  }, [search, searchArtists]);
+
+    searchArtists();
+
+    // Cleanup slow message timeout on unmount or when search term changes
+    return () => {
+      if (slowMessageRef.current) {
+        clearTimeout(slowMessageRef.current);
+      }
+    };
+  }, [debouncedSearchTerm]);
 
   const handleSelect = useCallback(
     (artist: Artist) => {
@@ -112,6 +119,8 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
             variant="outline"
             role="combobox"
             aria-expanded={open}
+            aria-haspopup="listbox"
+            aria-label={`${label}: ${value?.name || "Search artist"}`}
             className="h-14 w-full justify-between bg-input hover:bg-secondary"
           >
             {value ? (
@@ -130,7 +139,7 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
                 <span className="truncate font-medium">{value.name}</span>
               </div>
             ) : (
-              <span className="text-muted-foreground">Search artist...</span>
+              <span className="text-muted-foreground">Buscar artista...</span>
             )}
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
@@ -138,24 +147,30 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
           <Command shouldFilter={false}>
             <CommandInput
-              placeholder="Search artist..."
+              placeholder="Escribe el nombre..."
               value={search}
               onValueChange={setSearch}
+              aria-label={`Buscar ${label}`}
+              aria-describedby={`${label}-hint`}
             />
-            <CommandList>
-              {loading ? (
-                <div className="flex flex-col gap-2 py-6 text-center">
+            <span id={`${label}-hint`} className="sr-only">
+              Escribe al menos {MIN_SEARCH_LENGTH} caracteres para buscar
+            </span>
+            <CommandList aria-busy={isLoading} aria-live="polite">
+              {isLoading ? (
+                <div className="flex flex-col items-center gap-3 py-6 text-center">
+                  <Spinner size="md" />
                   <div className="text-sm text-muted-foreground">
-                    Searching in Tidal catalog...
+                    Buscando en el catálogo de TIDAL...
                   </div>
                   {showSlowMessage && (
                     <div className="text-xs text-muted-foreground/70">
-                      Resolving artists, this may take a moment...
+                      Encontrando artistas, un momento...
                     </div>
                   )}
                 </div>
-              ) : search.trim() && artists.length === 0 ? (
-                <CommandEmpty>No artists found.</CommandEmpty>
+              ) : debouncedSearchTerm.trim().length >= MIN_SEARCH_LENGTH && artists.length === 0 ? (
+                <CommandEmpty>No encontramos ese artista. Intenta con otro nombre.</CommandEmpty>
               ) : (
                 <CommandGroup>
                   {artists.map((artist) => (

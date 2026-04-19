@@ -10,10 +10,10 @@ export default function Home() {
         <div className="container mx-auto max-w-2xl px-4 py-8">
           <div className="mb-8 text-center">
             <h2 className="mb-2 text-2xl font-bold text-foreground text-balance">
-              Mix Your Favorite Artists
+              Mezcla a tus artistas favoritos
             </h2>
             <p className="text-muted-foreground text-pretty">
-              Select two artists and create the perfect playlist combining their best tracks
+              Elige dos artistas y crea la playlist perfecta combinando sus mejores éxitos
             </p>
           </div>
           <PlaylistMixer />

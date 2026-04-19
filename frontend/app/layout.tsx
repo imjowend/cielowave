@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "CieloWave - Playlist Mixer",
   description: "Mix your favorite artists into the perfect playlist",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
