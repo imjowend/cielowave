@@ -14,14 +14,19 @@ import (
 	"time"
 )
 
+// Constantes de las URLs de Tidal utilizadas para el inicio de sesión y guardado de listas de reproducción
 const (
+	// tidalLoginURL es el endpoint oficial de inicio de sesión e interfaz de consentimiento de Tidal.
 	tidalLoginURL    = "https://login.tidal.com/authorize"
+	// tidalUserAuthURL es el endpoint para intercambiar códigos de autorización por tokens de acceso de usuario.
 	tidalUserAuthURL = "https://auth.tidal.com/v1/oauth2/token"
+	// tidalAPIBase es la base de la OpenAPI de Tidal.
 	tidalAPIBase     = "https://openapi.tidal.com"
+	// Scopes (alcances de permisos) solicitados para leer y escribir las playlists del usuario.
 	tidalScopes      = "playlists.read playlists.write collection.read collection.write"
 )
 
-// UserClient handles the OAuth2 PKCE user flow and Tidal playlist operations.
+// UserClient gestiona el flujo de autenticación OAuth 2.1 PKCE y las operaciones de listas de reproducción de usuario.
 type UserClient struct {
 	clientID    string
 	redirectURI string
@@ -32,7 +37,7 @@ type UserClient struct {
 	states      *OAuthStateStore
 }
 
-// NewUserClient creates a UserClient and starts a single background cleanup goroutine.
+// NewUserClient inicializa el cliente UserClient e inicia una tarea en segundo plano para limpiar las playlists y estados OAuth expirados.
 func NewUserClient(clientID, redirectURI string) *UserClient {
 	uc := &UserClient{
 		clientID:    clientID,
@@ -43,6 +48,7 @@ func NewUserClient(clientID, redirectURI string) *UserClient {
 		playlists:   newPlaylistStore(),
 		states:      newOAuthStateStore(),
 	}
+	// Tarea recurrente cada 5 minutos para eliminar sesiones y playlists temporales expiradas de la memoria.
 	go func() {
 		for range time.Tick(5 * time.Minute) {
 			uc.playlists.cleanup()
@@ -52,7 +58,7 @@ func NewUserClient(clientID, redirectURI string) *UserClient {
 	return uc
 }
 
-// generateCodeVerifier returns a cryptographically random base64url string (64 bytes).
+// generateCodeVerifier genera un verificador de código (Code Verifier) aleatorio criptográficamente seguro (64 bytes) codificado en base64url.
 func generateCodeVerifier() (string, error) {
 	b := make([]byte, 64)
 	if _, err := rand.Read(b); err != nil {
@@ -61,13 +67,13 @@ func generateCodeVerifier() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// computeCodeChallenge returns BASE64URL(SHA256(verifier)) per RFC 7636.
+// computeCodeChallenge calcula el desafío de código (Code Challenge) usando SHA256 sobre el verifier, cumpliendo con RFC 7636.
 func computeCodeChallenge(verifier string) string {
 	h := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-// generateState returns a cryptographically random base64url string (32 bytes).
+// generateState genera un parámetro 'state' aleatorio para proteger el flujo contra ataques de falsificación de solicitudes (CSRF).
 func generateState() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -76,7 +82,7 @@ func generateState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// newUUID returns a random UUID v4 string.
+// newUUID genera un identificador UUID versión 4 estándar.
 func newUUID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -87,7 +93,7 @@ func newUUID() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
-// SavePlaylist stores a generated playlist and returns its UUID.
+// SavePlaylist almacena de forma temporal una playlist generada en la tienda interna y devuelve su ID único UUID.
 func (uc *UserClient) SavePlaylist(artistA, artistB string, tracks []Track) (string, error) {
 	id, err := newUUID()
 	if err != nil {
@@ -103,22 +109,22 @@ func (uc *UserClient) SavePlaylist(artistA, artistB string, tracks []Track) (str
 	return id, nil
 }
 
-// GetPlaylist retrieves a stored playlist by ID.
+// GetPlaylist recupera una playlist temporal guardada por su ID.
 func (uc *UserClient) GetPlaylist(id string) (SavedPlaylist, bool) {
 	return uc.playlists.get(id)
 }
 
-// GetState retrieves a stored OAuth state.
+// GetState recupera un estado OAuth almacenado temporalmente.
 func (uc *UserClient) GetState(state string) (OAuthState, bool) {
 	return uc.states.get(state)
 }
 
-// DeleteState removes an OAuth state after use.
+// DeleteState elimina un estado OAuth después de haber completado su uso.
 func (uc *UserClient) DeleteState(state string) {
 	uc.states.delete(state)
 }
 
-// BuildLoginURL generates PKCE params, stores the state, and returns the Tidal login URL.
+// BuildLoginURL genera los parámetros PKCE, los almacena temporalmente y retorna el enlace de inicio de sesión de Tidal.
 func (uc *UserClient) BuildLoginURL(playlistID string) (string, error) {
 	verifier, err := generateCodeVerifier()
 	if err != nil {
@@ -129,6 +135,7 @@ func (uc *UserClient) BuildLoginURL(playlistID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("generate state: %w", err)
 	}
+	// Guarda la relación de estado y verifier para validarla al retornar de la redirección.
 	uc.states.set(state, OAuthState{
 		CodeVerifier: verifier,
 		PlaylistID:   playlistID,
@@ -146,17 +153,17 @@ func (uc *UserClient) BuildLoginURL(playlistID string) (string, error) {
 	return tidalLoginURL + "?" + params.Encode(), nil
 }
 
-// OverrideAuthURL replaces the token endpoint URL; used in tests only.
+// OverrideAuthURL reemplaza la URL del endpoint del token (usado en tests).
 func (uc *UserClient) OverrideAuthURL(u string) { uc.authURL = u }
 
-// OverrideAPIBase replaces the API base URL; used in tests only.
+// OverrideAPIBase reemplaza la URL base de la OpenAPI de Tidal (usado en tests).
 func (uc *UserClient) OverrideAPIBase(u string) { uc.apiBase = u }
 
 type userTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-// ExchangeCode exchanges an authorization code for a user access token (PKCE — no client_secret).
+// ExchangeCode intercambia el código de autorización obtenido del callback por un token de acceso del usuario (PKCE sin client_secret).
 func (uc *UserClient) ExchangeCode(code, codeVerifier string) (string, error) {
 	data := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -187,7 +194,7 @@ type createPlaylistResponse struct {
 	} `json:"data"`
 }
 
-// CreatePlaylist creates a new public playlist in the user's Tidal account.
+// CreatePlaylist crea una nueva playlist pública en la cuenta personal de Tidal del usuario.
 func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"data": map[string]any{
@@ -223,7 +230,7 @@ func (uc *UserClient) CreatePlaylist(userToken, title string) (string, error) {
 	return result.Data.ID, nil
 }
 
-// AddTracks adds track IDs to an existing playlist via JSON:API relationships.
+// AddTracks añade canciones de forma masiva a una playlist del usuario en formato estándar de relaciones de JSON:API.
 func (uc *UserClient) AddTracks(userToken, playlistID string, trackIDs []string) error {
 	items := make([]map[string]string, len(trackIDs))
 	for i, id := range trackIDs {

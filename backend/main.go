@@ -16,39 +16,41 @@ import (
 )
 
 func main() {
+	// Configura slog por defecto en formato JSON para salida estándar de errores (logs estructurados).
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 
-	// Cargar variables de entorno desde .env (si existe), con fallback a variables del sistema
+	// Carga variables de entorno desde el archivo .env si existe.
 	if err := godotenv.Load(); err != nil {
-		slog.Info("No .env file found, using system environment")
+		slog.Info("No se encontró el archivo .env, usando variables de entorno del sistema")
 	}
 
-	// Carga las variables de entorno necesarias para el cliente de Tidal
+	// Recupera las variables de configuración requeridas.
 	clientID := os.Getenv("TIDAL_CLIENT_ID")
 	clientSecret := os.Getenv("TIDAL_CLIENT_SECRET")
 	redirectURI := os.Getenv("TIDAL_REDIRECT_URI")
 
 	if redirectURI == "" {
-		slog.Error("TIDAL_REDIRECT_URI is required")
+		slog.Error("TIDAL_REDIRECT_URI es obligatorio para el inicio de sesión del usuario")
 		os.Exit(1)
 	}
 
-	// Carga el puerto del servidor, con valor por defecto 8080
+	// Determina el puerto del servidor HTTP (por defecto 8080).
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// Inicializa el cliente de Tidal
+	// Inicializa el cliente base de Tidal (para búsqueda y catálogo con Client Credentials).
 	client, err := tidal.NewTidalClient(clientID, clientSecret)
 	if err != nil {
-		slog.Error("failed to initialize Tidal client", "err", err)
+		slog.Error("error al inicializar el cliente Tidal", "err", err)
 		os.Exit(1)
 	}
 
+	// Inicializa el cliente de usuario de Tidal (para autorización PKCE y guardado de playlists).
 	userClient := tidal.NewUserClient(clientID, redirectURI)
 
-	// Configura las rutas del servidor HTTP
+	// Registra y configura las rutas HTTP.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /api/artists", handleSearchArtists(client))
@@ -58,14 +60,15 @@ func main() {
 	mux.HandleFunc("GET /api/auth/tidal/login", handleTidalLogin(userClient))
 	mux.HandleFunc("GET /api/auth/tidal/callback", handleTidalCallback(userClient))
 
-	// Inicia el servidor HTTP con middleware CORS
-	slog.Info("CieloWave backend listening", "port", port)
+	// Inicia el servidor HTTP envolviéndolo en el middleware CORS.
+	slog.Info("Servidor de CieloWave backend escuchando", "port", port)
 	if err := http.ListenAndServe(":"+port, corsMiddleware(mux)); err != nil {
-		slog.Error("server error", "err", err)
+		slog.Error("error crítico del servidor", "err", err)
 		os.Exit(1)
 	}
 }
 
+// corsMiddleware agrega las cabeceras CORS de control de acceso para peticiones cruzadas desde el frontend.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -79,24 +82,25 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// writeJSON envía una respuesta formateada en JSON con su correspondiente código HTTP.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
 
+// writeError envía una respuesta de error estructurada en JSON.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// handleHealth retorna el estado de salud del backend (OK).
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// queryMatchScore returns how many leading characters of q match as a prefix
-// of name (case-insensitive). A full match scores len(q); no match scores 0.
-// Non-prefix matches score 0 — Tidal's API already ranks by relevance, so this
-// function only promotes prefix-matching artists to the front of those results.
+// queryMatchScore calcula cuántos caracteres iniciales de 'q' coinciden como prefijo del 'name'.
+// Permite ordenar artistas para destacar aquellos cuyo nombre empiece directamente con la consulta.
 func queryMatchScore(name, q string) int {
 	nl := strings.ToLower(name)
 	ql := strings.ToLower(q)
@@ -108,6 +112,7 @@ func queryMatchScore(name, q string) int {
 	return 0
 }
 
+// sortArtistsByQuery ordena los artistas de forma descendente basándose en su puntuación de coincidencia de prefijo.
 func sortArtistsByQuery(artists []tidal.Artist, q string) {
 	sort.SliceStable(artists, func(i, j int) bool {
 		si := queryMatchScore(artists[i].Name, q)
@@ -116,22 +121,24 @@ func sortArtistsByQuery(artists []tidal.Artist, q string) {
 	})
 }
 
+// handleSearchArtists busca artistas directamente en la API de Tidal v1 usando el App Token.
 func handleSearchArtists(c *tidal.TidalClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		if q == "" {
-			writeError(w, http.StatusBadRequest, "missing query parameter: q")
+			writeError(w, http.StatusBadRequest, "falta el parámetro de búsqueda: q")
 			return
 		}
 
+		// Llama a la búsqueda directa en Tidal v1.
 		artists, err := c.SearchArtists(q)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "tidal search failed: "+err.Error())
+			writeError(w, http.StatusBadGateway, "la búsqueda en tidal falló: "+err.Error())
 			return
 		}
 
+		// Ordena por coincidencia de prefijo y limita a los mejores 5 resultados.
 		sortArtistsByQuery(artists, q)
-
 		if len(artists) > 5 {
 			artists = artists[:5]
 		}
@@ -140,6 +147,7 @@ func handleSearchArtists(c *tidal.TidalClient) http.HandlerFunc {
 	}
 }
 
+// handleGetArtistTracks obtiene las canciones de catálogo de un artista en Tidal.
 func handleGetArtistTracks(c *tidal.TidalClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -152,15 +160,16 @@ func handleGetArtistTracks(c *tidal.TidalClient) http.HandlerFunc {
 	}
 }
 
+// handleCreatePlaylist mezcla las canciones obtenidas de los dos artistas.
 func handleCreatePlaylist(c *tidal.TidalClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req tidal.PlaylistRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			writeError(w, http.StatusBadRequest, "cuerpo de solicitud inválido")
 			return
 		}
 		if req.ArtistAID == "" || req.ArtistBID == "" {
-			writeError(w, http.StatusBadRequest, "artistAId and artistBId are required")
+			writeError(w, http.StatusBadRequest, "artistAId y artistBId son obligatorios")
 			return
 		}
 		if req.Count <= 0 {
@@ -174,11 +183,11 @@ func handleCreatePlaylist(c *tidal.TidalClient) http.HandlerFunc {
 		tracksA, errA = c.GetArtistTracks(req.ArtistAID, req.Count*2)
 		tracksB, errB = c.GetArtistTracks(req.ArtistBID, req.Count*2)
 		if errA != nil {
-			writeError(w, http.StatusBadGateway, "failed to fetch tracks for artist A: "+errA.Error())
+			writeError(w, http.StatusBadGateway, "fallo al obtener canciones del artista A: "+errA.Error())
 			return
 		}
 		if errB != nil {
-			writeError(w, http.StatusBadGateway, "failed to fetch tracks for artist B: "+errB.Error())
+			writeError(w, http.StatusBadGateway, "fallo al obtener canciones del artista B: "+errB.Error())
 			return
 		}
 
@@ -192,6 +201,7 @@ func handleCreatePlaylist(c *tidal.TidalClient) http.HandlerFunc {
 
 const frontendBase = "https://cielowave.vercel.app"
 
+// handleSavePlaylist guarda una playlist generada de forma temporal en memoria y devuelve un identificador UUID.
 func handleSavePlaylist(uc *tidal.UserClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -200,44 +210,46 @@ func handleSavePlaylist(uc *tidal.UserClient) http.HandlerFunc {
 			Tracks  []tidal.Track `json:"tracks"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			writeError(w, http.StatusBadRequest, "cuerpo de solicitud inválido")
 			return
 		}
 		if req.ArtistA == "" || req.ArtistB == "" || len(req.Tracks) == 0 {
-			writeError(w, http.StatusBadRequest, "artistA, artistB, and tracks are required")
+			writeError(w, http.StatusBadRequest, "artistA, artistB y tracks son requeridos")
 			return
 		}
 		id, err := uc.SavePlaylist(req.ArtistA, req.ArtistB, req.Tracks)
 		if err != nil {
-			slog.Error("save playlist failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "failed to save playlist")
+			slog.Error("falló al guardar la playlist", "err", err)
+			writeError(w, http.StatusInternalServerError, "error al guardar la playlist temporal")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"playlist_id": id})
 	}
 }
 
+// handleTidalLogin redirige al usuario a la página de login y autorización de Tidal con PKCE.
 func handleTidalLogin(uc *tidal.UserClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		playlistID := r.URL.Query().Get("playlist_id")
 		if playlistID == "" {
-			writeError(w, http.StatusBadRequest, "missing playlist_id")
+			writeError(w, http.StatusBadRequest, "falta el parámetro playlist_id")
 			return
 		}
 		if _, ok := uc.GetPlaylist(playlistID); !ok {
-			writeError(w, http.StatusNotFound, "playlist not found or expired")
+			writeError(w, http.StatusNotFound, "playlist no encontrada o expirada")
 			return
 		}
 		loginURL, err := uc.BuildLoginURL(playlistID)
 		if err != nil {
-			slog.Error("build login URL failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "failed to initiate auth")
+			slog.Error("falló al construir URL de login", "err", err)
+			writeError(w, http.StatusInternalServerError, "error al iniciar autenticación con Tidal")
 			return
 		}
 		http.Redirect(w, r, loginURL, http.StatusFound)
 	}
 }
 
+// handleTidalCallback recibe el código de retorno de Tidal, intercambia el código por el token de usuario y crea la playlist.
 func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
@@ -245,7 +257,7 @@ func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
 
 		oauthState, ok := uc.GetState(state)
 		if !ok {
-			slog.Warn("invalid or expired OAuth state", "state", state)
+			slog.Warn("estado OAuth inválido o expirado", "state", state)
 			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
 			return
 		}
@@ -253,14 +265,14 @@ func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
 
 		userToken, err := uc.ExchangeCode(code, oauthState.CodeVerifier)
 		if err != nil {
-			slog.Error("code exchange failed", "err", err)
+			slog.Error("intercambio de código fallido", "err", err)
 			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
 			return
 		}
 
 		playlist, ok := uc.GetPlaylist(oauthState.PlaylistID)
 		if !ok {
-			slog.Warn("playlist not found or expired", "playlist_id", oauthState.PlaylistID)
+			slog.Warn("playlist no encontrada o expirada", "playlist_id", oauthState.PlaylistID)
 			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
 			return
 		}
@@ -268,7 +280,7 @@ func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
 		title := fmt.Sprintf("%s × %s — CieloWave", playlist.ArtistA, playlist.ArtistB)
 		playlistID, err := uc.CreatePlaylist(userToken, title)
 		if err != nil {
-			slog.Error("create playlist failed", "err", err)
+			slog.Error("creación de playlist fallida", "err", err)
 			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
 			return
 		}
@@ -278,7 +290,7 @@ func handleTidalCallback(uc *tidal.UserClient) http.HandlerFunc {
 			trackIDs[i] = t.ID
 		}
 		if err := uc.AddTracks(userToken, playlistID, trackIDs); err != nil {
-			slog.Error("add tracks failed", "err", err)
+			slog.Error("falló al agregar pistas a la playlist", "err", err)
 			http.Redirect(w, r, frontendBase+"?error=auth_failed", http.StatusFound)
 			return
 		}

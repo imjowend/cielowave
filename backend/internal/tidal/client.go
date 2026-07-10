@@ -14,14 +14,19 @@ import (
 	"time"
 )
 
+// Constantes de las URLs para interactuar con la API de Tidal
 const (
+	// tidalAuthURL es el endpoint OAuth 2.1 para la autenticación de servidor.
 	tidalAuthURL     = "https://auth.tidal.com/v1/oauth2/token"
+	// tidalOpenAPIBase es la URL base oficial para la OpenAPI v2 de Tidal.
 	tidalOpenAPIBase = "https://openapi.tidal.com"
+	// tidalV1Base es la URL base no oficial (legacy) para la API v1.
 	tidalV1Base      = "https://api.tidal.com"
+	// tidalV1Token es el token no oficial (App Token) extraído que permite realizar búsquedas en la API v1.
 	tidalV1Token     = "CzET4vdadNUFQ5JU"
 )
 
-// TidalClient is an authenticated client for the Tidal Open API v2.
+// TidalClient gestiona la comunicación autenticada con la API de Tidal.
 type TidalClient struct {
 	clientID     string
 	clientSecret string
@@ -32,32 +37,34 @@ type TidalClient struct {
 	tokenExpiry  time.Time
 }
 
-// tokenResponse models the OAuth 2.1 token endpoint response.
+// tokenResponse modela la respuesta del endpoint de autenticación de Tidal.
 type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int    `json:"expires_in"`
 	TokenType   string `json:"token_type"`
 }
 
-// jsonAPIResource is a single JSON:API resource object.
+// jsonAPIResource representa un único recurso en el formato estándar de JSON:API.
 type jsonAPIResource struct {
 	ID         string          `json:"id"`
 	Type       string          `json:"type"`
 	Attributes json.RawMessage `json:"attributes"`
 }
 
-// v1SearchResponse models GET /v1/search?types=ARTISTS.
+// v1SearchResponse modela la estructura de respuesta JSON de la API legacy v1.
+// GET /v1/search?types=ARTISTS
 type v1SearchResponse struct {
 	Artists struct {
 		Items []struct {
 			ID      int    `json:"id"`
 			Name    string `json:"name"`
-			Picture string `json:"picture"`
+			Picture string `json:"picture"` // Hash UUID de la imagen de perfil del artista.
 		} `json:"items"`
 	} `json:"artists"`
 }
 
-// tracksRelationshipResponse models GET /v2/artists/{id}/relationships/tracks?include=tracks.
+// tracksRelationshipResponse modela la respuesta del catálogo de canciones de un artista.
+// GET /v2/artists/{id}/relationships/tracks?include=tracks
 type tracksRelationshipResponse struct {
 	Data []struct {
 		ID string `json:"id"`
@@ -68,7 +75,7 @@ type tracksRelationshipResponse struct {
 	} `json:"links"`
 }
 
-// isrcTracksResponse models GET /v2/tracks?filter[isrc]={isrc}&countryCode=US&include=artists.
+// isrcTracksResponse modela la búsqueda de canciones a través del código ISRC.
 type isrcTracksResponse struct {
 	Data []struct {
 		Relationships struct {
@@ -82,14 +89,14 @@ type isrcTracksResponse struct {
 	Included []jsonAPIResource `json:"included"`
 }
 
-// profileArtResponse models GET /v2/artists/{id}/relationships/profileArt.
+// profileArtResponse modela la respuesta de relaciones de arte de perfil.
 type profileArtResponse struct {
 	Data []struct {
 		ID string `json:"id"`
 	} `json:"data"`
 }
 
-// artworkResponse models GET /v2/artworks/{id}.
+// artworkResponse modela la respuesta de recursos de imágenes (artworks).
 type artworkResponse struct {
 	Data struct {
 		Attributes struct {
@@ -103,26 +110,28 @@ type artworkResponse struct {
 	} `json:"data"`
 }
 
-// flexInt unmarshals a JSON number or quoted string into an int.
-// Tidal's API sometimes returns duration as a string (e.g. "209").
+// flexInt es un tipo especial para deserializar números o strings con formato numérico de forma flexible en JSON.
+// Esto es necesario porque Tidal a veces retorna la duración como entero y otras como string (ej. "209" o formato ISO 8601).
 type flexInt int
 
 func (f *flexInt) UnmarshalJSON(b []byte) error {
 	var i int
+	// Intenta unmarshal como número entero simple.
 	if err := json.Unmarshal(b, &i); err == nil {
 		*f = flexInt(i)
 		return nil
 	}
 	var s string
+	// Si falla, intenta unmarshal como string.
 	if err := json.Unmarshal(b, &s); err != nil {
 		return err
 	}
-	// Plain integer string (e.g. "209")
+	// Intenta parsear si es una cadena con un entero (ej. "209").
 	if i, err := strconv.Atoi(s); err == nil {
 		*f = flexInt(i)
 		return nil
 	}
-	// ISO 8601 duration (e.g. "PT3M13S")
+	// Intenta parsear si es una cadena de duración ISO 8601 (ej. "PT3M13S").
 	secs, err := parseISO8601Seconds(s)
 	if err != nil {
 		return err
@@ -131,8 +140,7 @@ func (f *flexInt) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// parseISO8601Seconds converts a PT duration string to total seconds.
-// Handles PTxHxMxS, PTxMxS, PTxS forms.
+// parseISO8601Seconds convierte una cadena de duración ISO 8601 (tipo PT3M13S) a segundos.
 func parseISO8601Seconds(s string) (int, error) {
 	s = strings.TrimPrefix(s, "PT")
 	var total int
@@ -162,10 +170,11 @@ func parseISO8601Seconds(s string) (int, error) {
 	return total, nil
 }
 
+// trackAttributes modela los atributos de una canción en Tidal v2.
 type trackAttributes struct {
 	Title    string  `json:"title"`
 	Duration flexInt `json:"duration"`
-	ISRC     string `json:"isrc"`
+	ISRC     string  `json:"isrc"`
 	Album    struct {
 		Title string `json:"title"`
 	} `json:"album"`
@@ -176,7 +185,7 @@ type trackAttributes struct {
 	} `json:"artists"`
 }
 
-// NewTidalClient creates a TidalClient and fetches an initial access token.
+// NewTidalClient inicializa un nuevo cliente de Tidal y obtiene el token OAuth 2.1 inicial.
 func NewTidalClient(clientID, clientSecret string) (*TidalClient, error) {
 	c := &TidalClient{
 		clientID:     clientID,
@@ -195,8 +204,7 @@ func NewTidalClient(clientID, clientSecret string) (*TidalClient, error) {
 	return c, nil
 }
 
-// NewTidalClientForTest creates a TidalClient with a pre-set token for testing.
-// It does not call the real Tidal auth endpoint.
+// NewTidalClientForTest crea una instancia para entorno de pruebas con un token predefinido.
 func NewTidalClientForTest(apiBase, token string) *TidalClient {
 	return &TidalClient{
 		apiBase:     apiBase,
@@ -206,9 +214,10 @@ func NewTidalClientForTest(apiBase, token string) *TidalClient {
 	}
 }
 
-// OverrideAPIBase replaces the API base URL; used in tests only.
+// OverrideAPIBase permite sobrescribir la URL base de la API (solo usado en testing).
 func (c *TidalClient) OverrideAPIBase(u string) { c.apiBase = u }
 
+// refreshToken solicita un nuevo Access Token a Tidal (Client Credentials flow).
 func (c *TidalClient) refreshToken() error {
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
@@ -217,7 +226,7 @@ func (c *TidalClient) refreshToken() error {
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(c.clientID, c.clientSecret) // <-- esto genera el header Basic automáticamente
+	req.SetBasicAuth(c.clientID, c.clientSecret)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.httpClient.Do(req)
@@ -236,7 +245,6 @@ func (c *TidalClient) refreshToken() error {
 		return err
 	}
 
-	// Subtract 30s buffer so we refresh before the token actually expires.
 	expiry := time.Now().Add(time.Duration(tr.ExpiresIn)*time.Second - 30*time.Second)
 
 	c.mu.Lock()
@@ -247,6 +255,7 @@ func (c *TidalClient) refreshToken() error {
 	return nil
 }
 
+// getToken obtiene el token activo, renovándolo de forma transparente si ha expirado.
 func (c *TidalClient) getToken() (string, error) {
 	c.mu.Lock()
 	expired := time.Now().After(c.tokenExpiry)
@@ -264,6 +273,7 @@ func (c *TidalClient) getToken() (string, error) {
 	return token, nil
 }
 
+// doRequest realiza solicitudes http.Client manejando el retroceso exponencial automático (HTTP 429).
 func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 	const maxRetries = 3
 	retryDelays := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
@@ -313,8 +323,8 @@ func (c *TidalClient) doRequest(method, path string) (*http.Response, error) {
 	return nil, fmt.Errorf("doRequest: unexpected exit from retry loop")
 }
 
-// SearchArtists searches for artists matching query using the Tidal v1 API.
-// Calls GET /v1/search?query={query}&types=ARTISTS&limit=10&countryCode=US
+// SearchArtists busca artistas en Tidal usando el endpoint v1 y un App Token de ingeniería inversa.
+// Realiza una petición GET a /v1/search?query={query}&types=ARTISTS e interpreta la respuesta.
 func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 	reqURL := tidalV1Base + "/v1/search?query=" + url.QueryEscape(query) + "&types=ARTISTS&limit=10&countryCode=US"
 
@@ -343,6 +353,7 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 	artists := make([]Artist, 0, len(sr.Artists.Items))
 	for _, item := range sr.Artists.Items {
 		var imgURL string
+		// Construye la URL de la imagen si se retorna un hash picture válido de Tidal v1.
 		if item.Picture != "" {
 			imgURL = "https://resources.tidal.com/images/" + strings.ReplaceAll(item.Picture, "-", "/") + "/320x320.jpg"
 		}
@@ -352,9 +363,7 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 	return artists, nil
 }
 
-// GetArtistTracks returns tracks for the given artist, paginating as needed.
-// If maxTracks > 0, pagination stops once that many tracks have been collected.
-// Calls GET /v2/artists/{artistID}/relationships/tracks?countryCode=US&include=tracks
+// GetArtistTracks retorna la lista completa de canciones del artista, manejando la paginación según corresponda.
 func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, error) {
 	var all []Track
 	path := "/v2/artists/" + url.PathEscape(artistID) + "/relationships/tracks?countryCode=US&include=tracks&collapseBy=FINGERPRINT"
@@ -373,11 +382,6 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 			return nil, err
 		}
 
-		/*if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return nil, fmt.Errorf("get tracks failed (%d): %s", resp.StatusCode, body)
-		}*/
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -391,7 +395,7 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 		if err != nil {
 			return nil, err
 		}
-		// Index included track resources by ID.
+		
 		includedByID := make(map[string]jsonAPIResource, len(tr.Included))
 		slog.Debug("page fetched", "data_count", len(tr.Data), "included_count", len(tr.Included))
 		for _, res := range tr.Included {
@@ -436,12 +440,10 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 			all = append(all, t)
 		}
 
-		// Follow pagination cursor.
 		next := tr.Links.Next
 		if next == "" {
 			break
 		}
-		// next may be a full URL or a relative path; extract path+query either way.
 		var nextPath string
 		if strings.HasPrefix(next, "http") {
 			u, err := url.Parse(next)
@@ -452,7 +454,6 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 		} else {
 			nextPath = next
 		}
-		// Ensure the path includes /v2 regardless of which branch was taken.
 		if !strings.HasPrefix(nextPath, "/v2") {
 			nextPath = "/v2" + nextPath
 		}
