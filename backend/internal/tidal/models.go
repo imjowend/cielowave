@@ -16,6 +16,7 @@ type Track struct {
 	AlbumName       string `json:"albumName,omitempty"`
 	ArtistID        string `json:"artistId,omitempty"`
 	ArtistName      string `json:"artistName,omitempty"`
+	ReleaseDate     string `json:"releaseDate,omitempty"`
 }
 
 // PlaylistRequest is the request body for POST /api/playlist.

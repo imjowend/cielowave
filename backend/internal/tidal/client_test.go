@@ -87,6 +87,115 @@ func TestSearchArtists_ParsesImageLinks(t *testing.T) {
 	}
 }
 
+func TestGetArtistTracks_ResolvesArtistAlbumFromRelationships(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !containsParam(r.URL.RawQuery, "include=tracks,tracks.artists,tracks.albums") {
+			t.Errorf("expected nested include param, got %q", r.URL.RawQuery)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []any{
+				map[string]string{"id": "108093771", "type": "tracks"},
+				map[string]string{"id": "108409581", "type": "tracks"},
+			},
+			"included": []any{
+				map[string]any{
+					"id":   "108093771",
+					"type": "tracks",
+					"attributes": map[string]any{
+						"title":    "Rockstar",
+						"duration": "PT1M52S",
+						"isrc":     "CA5KR1702134",
+					},
+					"relationships": map[string]any{
+						"artists": map[string]any{"data": []any{
+							map[string]string{"id": "6772771", "type": "artists"},
+						}},
+						"albums": map[string]any{"data": []any{
+							map[string]string{"id": "108093770", "type": "albums"},
+						}},
+					},
+				},
+				map[string]any{
+					"id":   "108409581",
+					"type": "tracks",
+					"attributes": map[string]any{
+						"title":    "She Don't Give a Fo",
+						"duration": "PT3M5S",
+						"isrc":     "QZW9L2249675",
+					},
+					"relationships": map[string]any{
+						"artists": map[string]any{"data": []any{
+							map[string]string{"id": "6772771", "type": "artists"},
+							map[string]string{"id": "9031404", "type": "artists"},
+						}},
+						"albums": map[string]any{"data": []any{
+							map[string]string{"id": "108409580", "type": "albums"},
+						}},
+					},
+				},
+				map[string]any{
+					"id":         "6772771",
+					"type":       "artists",
+					"attributes": map[string]any{"name": "Duki"},
+				},
+				map[string]any{
+					"id":         "9031404",
+					"type":       "artists",
+					"attributes": map[string]any{"name": "Maria Becerra"},
+				},
+				map[string]any{
+					"id":   "108093770",
+					"type": "albums",
+					"attributes": map[string]any{
+						"title":       "Rockstar",
+						"releaseDate": "2018-03-09",
+					},
+				},
+				map[string]any{
+					"id":   "108409580",
+					"type": "albums",
+					"attributes": map[string]any{
+						"title":       "She Don't Give a Fo (Single)",
+						"releaseDate": "2019-11-21",
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := newTestTidalClient(srv.URL)
+	tracks, err := c.GetArtistTracks("6772771", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tracks) != 2 {
+		t.Fatalf("expected 2 tracks, got %d", len(tracks))
+	}
+
+	solo := tracks[0]
+	if solo.ArtistName != "Duki" || solo.ArtistID != "6772771" {
+		t.Errorf("track solista: esperaba artista Duki/6772771, got %q/%q", solo.ArtistName, solo.ArtistID)
+	}
+	if solo.AlbumName != "Rockstar" {
+		t.Errorf("esperaba albumName=Rockstar, got %q", solo.AlbumName)
+	}
+	if solo.ReleaseDate != "2018-03-09" {
+		t.Errorf("esperaba releaseDate=2018-03-09, got %q", solo.ReleaseDate)
+	}
+
+	collab := tracks[1]
+	if collab.ArtistName != "Duki" || collab.ArtistID != "6772771" {
+		t.Errorf("track colab: esperaba primer artista Duki/6772771, got %q/%q", collab.ArtistName, collab.ArtistID)
+	}
+	if collab.AlbumName != "She Don't Give a Fo (Single)" {
+		t.Errorf("esperaba albumName de colab, got %q", collab.AlbumName)
+	}
+	if collab.ReleaseDate != "2019-11-21" {
+		t.Errorf("esperaba releaseDate=2019-11-21, got %q", collab.ReleaseDate)
+	}
+}
+
 func containsParam(query, param string) bool {
 	for _, p := range splitParams(query) {
 		if p == param {

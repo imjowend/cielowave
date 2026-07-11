@@ -46,9 +46,10 @@ type tokenResponse struct {
 
 // jsonAPIResource representa un único recurso en el formato estándar de JSON:API.
 type jsonAPIResource struct {
-	ID         string          `json:"id"`
-	Type       string          `json:"type"`
-	Attributes json.RawMessage `json:"attributes"`
+	ID            string          `json:"id"`
+	Type          string          `json:"type"`
+	Attributes    json.RawMessage `json:"attributes"`
+	Relationships json.RawMessage `json:"relationships"`
 }
 
 // v1SearchResponse modela la estructura de respuesta JSON de la API legacy v1.
@@ -171,18 +172,37 @@ func parseISO8601Seconds(s string) (int, error) {
 }
 
 // trackAttributes modela los atributos de una canción en Tidal v2.
+// album y artistas NO vienen acá — Tidal los expone como relationships (ver trackRelationships).
 type trackAttributes struct {
 	Title    string  `json:"title"`
 	Duration flexInt `json:"duration"`
 	ISRC     string  `json:"isrc"`
-	Album    struct {
-		Title string `json:"title"`
-	} `json:"album"`
-	Artists []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-		Main bool   `json:"main"`
+}
+
+// trackRelationships modela las referencias a artistas y álbum de un track,
+// que hay que resolver contra el array "included" de la respuesta.
+type trackRelationships struct {
+	Artists struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	} `json:"artists"`
+	Albums struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	} `json:"albums"`
+}
+
+// artistAttributes modela los atributos de un recurso "artists" incluido (sideloaded).
+type artistAttributes struct {
+	Name string `json:"name"`
+}
+
+// albumAttributes modela los atributos de un recurso "albums" incluido (sideloaded).
+type albumAttributes struct {
+	Title       string `json:"title"`
+	ReleaseDate string `json:"releaseDate"`
 }
 
 // NewTidalClient inicializa un nuevo cliente de Tidal y obtiene el token OAuth 2.1 inicial.
@@ -366,7 +386,7 @@ func (c *TidalClient) SearchArtists(query string) ([]Artist, error) {
 // GetArtistTracks retorna la lista completa de canciones del artista, manejando la paginación según corresponda.
 func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, error) {
 	var all []Track
-	path := "/v2/artists/" + url.PathEscape(artistID) + "/relationships/tracks?countryCode=US&include=tracks&collapseBy=FINGERPRINT"
+	path := "/v2/artists/" + url.PathEscape(artistID) + "/relationships/tracks?countryCode=US&include=tracks,tracks.artists,tracks.albums&collapseBy=FINGERPRINT"
 	slog.Debug("GetArtistTracks", "path", path)
 	firstPage := true
 	for path != "" {
@@ -395,21 +415,18 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 		if err != nil {
 			return nil, err
 		}
-		
-		includedByID := make(map[string]jsonAPIResource, len(tr.Included))
+
+		includedByKey := make(map[string]jsonAPIResource, len(tr.Included))
 		slog.Debug("page fetched", "data_count", len(tr.Data), "included_count", len(tr.Included))
 		for _, res := range tr.Included {
 			slog.Debug("included resource", "type", res.Type, "id", res.ID)
-
-			if res.Type == "tracks" {
-				includedByID[res.ID] = res
-			}
+			includedByKey[res.Type+":"+res.ID] = res
 		}
 
 		for _, ref := range tr.Data {
 			slog.Debug("data ref", "id", ref.ID)
 
-			res, ok := includedByID[ref.ID]
+			res, ok := includedByKey["tracks:"+ref.ID]
 			if !ok {
 				continue
 			}
@@ -423,20 +440,35 @@ func (c *TidalClient) GetArtistTracks(artistID string, maxTracks int) ([]Track, 
 				ID:              res.ID,
 				Title:           attr.Title,
 				DurationSeconds: int(attr.Duration),
-				AlbumName:       attr.Album.Title,
 				ISRC:            attr.ISRC,
 			}
-			for _, a := range attr.Artists {
-				if t.ArtistID == "" {
-					t.ArtistID = a.ID
-					t.ArtistName = a.Name
+
+			var rel trackRelationships
+			if err := json.Unmarshal(res.Relationships, &rel); err != nil {
+				slog.Error("unmarshal track relationships", "track_id", res.ID, "err", err)
+			} else {
+				if len(rel.Artists.Data) > 0 {
+					artistRef := rel.Artists.Data[0]
+					if artistRes, ok := includedByKey["artists:"+artistRef.ID]; ok {
+						var aAttr artistAttributes
+						if err := json.Unmarshal(artistRes.Attributes, &aAttr); err == nil {
+							t.ArtistID = artistRef.ID
+							t.ArtistName = aAttr.Name
+						}
+					}
 				}
-				if a.Main {
-					t.ArtistID = a.ID
-					t.ArtistName = a.Name
-					break
+				if len(rel.Albums.Data) > 0 {
+					albumRef := rel.Albums.Data[0]
+					if albumRes, ok := includedByKey["albums:"+albumRef.ID]; ok {
+						var alAttr albumAttributes
+						if err := json.Unmarshal(albumRes.Attributes, &alAttr); err == nil {
+							t.AlbumName = alAttr.Title
+							t.ReleaseDate = alAttr.ReleaseDate
+						}
+					}
 				}
 			}
+
 			all = append(all, t)
 		}
 
