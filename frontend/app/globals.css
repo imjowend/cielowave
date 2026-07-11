@@ -20,8 +20,12 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221 83% 53%;
     --radius: 0.5rem;
-    --artist-a: 221 83% 95%;
-    --artist-b: 280 83% 95%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --artist-a: 221 83% 93%;
+    --artist-b: 195 83% 90%;
   }
 
   .dark {
@@ -40,8 +44,12 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 224.3 76.3% 48%;
-    --artist-a: 221 50% 20%;
-    --artist-b: 280 50% 20%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --artist-a: 221 50% 22%;
+    --artist-b: 195 55% 20%;
   }
 }
 
