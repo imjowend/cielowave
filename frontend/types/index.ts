@@ -21,6 +21,7 @@ export interface Track {
   artistName: string;
   albumName: string;
   durationSeconds: number;
+  releaseDate?: string;
 }
 
 export interface PlaylistResponse {

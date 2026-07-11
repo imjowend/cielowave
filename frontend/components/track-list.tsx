@@ -37,6 +37,12 @@ export function TrackList({ tracks, artistA, artistB }: TrackListProps) {
                   <span className="truncate">{track.artistName}</span>
                   <span className="shrink-0">•</span>
                   <span className="truncate">{track.albumName}</span>
+                  {track.releaseDate && (
+                    <>
+                      <span className="shrink-0">•</span>
+                      <span className="shrink-0">{track.releaseDate.slice(0, 4)}</span>
+                    </>
+                  )}
                 </div>
               </div>
               <span className="shrink-0 text-sm text-muted-foreground">
