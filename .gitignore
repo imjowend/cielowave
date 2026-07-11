@@ -8,6 +8,8 @@
 *.out
 vendor/
 go.sum
+backend/backend
+backend/cielowave-api
 
 # Node.js
 node_modules/

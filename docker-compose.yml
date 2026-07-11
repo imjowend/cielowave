@@ -1,0 +1,11 @@
+services:
+  cielowave-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cielowave-api
+    restart: unless-stopped
+    ports:
+      - "8083:8080"
+    env_file:
+      - ./backend/.env
