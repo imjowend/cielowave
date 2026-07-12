@@ -30,7 +30,7 @@ export function QRSaveTidal({ authUrl, size = 180 }: QRSaveTidalProps) {
           Escanea y listo
         </p>
         <p className="text-xs text-muted-foreground">
-          Usa la cámara de tu móvil para guardar tu mezcla al instante
+          Usá la camara de tu celu para escanear el QR y guardar la playlist.
         </p>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { BackgroundGlow } from "@/components/background-glow";
 
 export const metadata: Metadata = {
   title: "CieloWave - Playlist Mixer",
@@ -19,6 +20,7 @@ export default function RootLayout({
     <html lang="es" suppressHydrationWarning>
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <BackgroundGlow />
           {children}
         </ThemeProvider>
       </body>

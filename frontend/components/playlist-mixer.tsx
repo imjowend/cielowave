@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Loader2, RefreshCw, Music, ExternalLink } from "lucide-react";
+import { Loader2, RefreshCw, Music, ExternalLink, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { ArtistCombobox } from "@/components/artist-combobox";
@@ -11,6 +11,11 @@ import type { Artist, Track, PlaylistResponse } from "@/types";
 
 const API_URL = "";
 const PUBLIC_BASE = "https://cielowave.vercel.app";
+
+// Song count range and stepper increment for the playlist size control
+const MIN_SONGS = 10;
+const MAX_SONGS = 50;
+const SONG_STEP = 5;
 
 export function PlaylistMixer() {
   const [artistA, setArtistA] = useState<Artist | null>(null);
@@ -88,6 +93,14 @@ export function PlaylistMixer() {
 
   const canGenerate = artistA && artistB && !loading;
 
+  const decrementSongCount = useCallback(() => {
+    setSongCount((prev) => Math.max(MIN_SONGS, prev - SONG_STEP));
+  }, []);
+
+  const incrementSongCount = useCallback(() => {
+    setSongCount((prev) => Math.min(MAX_SONGS, prev + SONG_STEP));
+  }, []);
+
   return (
     <div className="flex flex-col gap-8">
       {/* Artist Selection */}
@@ -112,19 +125,45 @@ export function PlaylistMixer() {
           <label className="text-sm font-medium text-muted-foreground">
             Canciones en tu playlist
           </label>
-          <span className="text-lg font-semibold text-primary">{songCount}</span>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 border-primary text-primary hover:bg-primary/10 hover:text-primary"
+              onClick={decrementSongCount}
+              disabled={songCount <= MIN_SONGS}
+              aria-label={`Restar ${SONG_STEP} canciones`}
+            >
+              <Minus className="h-4 w-4" />
+            </Button>
+            <span className="w-8 text-center text-lg font-semibold text-primary">
+              {songCount}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 border-primary text-primary hover:bg-primary/10 hover:text-primary"
+              onClick={incrementSongCount}
+              disabled={songCount >= MAX_SONGS}
+              aria-label={`Sumar ${SONG_STEP} canciones`}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
         <Slider
-          min={10}
-          max={50}
+          min={MIN_SONGS}
+          max={MAX_SONGS}
           step={1}
           value={[songCount]}
           onValueChange={(value) => setSongCount(value[0])}
           className="w-full"
         />
         <div className="flex justify-between text-xs text-muted-foreground">
-          <span>10</span>
-          <span>50</span>
+          <span>{MIN_SONGS}</span>
+          <span>{MAX_SONGS}</span>
         </div>
       </section>
 
@@ -178,10 +217,10 @@ export function PlaylistMixer() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="font-semibold text-foreground">
-                    Llévala contigo
+                    Guarda esta joyita y llevala a tus oidos
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    Guarda tu mezcla en TIDAL y escúchala donde quieras
+                    Guardá esta playlist en tu cuenta de TIDAL y disfrutala en cualquier momento.
                   </p>
                 </div>
                 <div className="flex gap-2">

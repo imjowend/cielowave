@@ -4,7 +4,8 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    color-scheme: light;
+    --background: 210 40% 98%;
     --foreground: 240 10% 3.9%;
     --primary: 221 83% 53%;
     --primary-foreground: 210 40% 98%;
@@ -24,11 +25,10 @@
     --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
-    --artist-a: 221 83% 93%;
-    --artist-b: 195 83% 90%;
   }
 
   .dark {
+    color-scheme: dark;
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
     --primary: 217.2 91.2% 59.8%;
@@ -48,14 +48,12 @@
     --card-foreground: 210 40% 98%;
     --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;
-    --artist-a: 221 50% 22%;
-    --artist-b: 195 55% 20%;
   }
 }
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-border transition-colors duration-500 ease-in-out;
   }
 
   body {

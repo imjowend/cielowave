@@ -32,3 +32,6 @@ Thumbs.db
 
 # Assistant configurations
 .claude/
+
+#IntelliJ
+.idea/

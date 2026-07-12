@@ -144,14 +144,15 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
-          <Command shouldFilter={false}>
+        <PopoverContent className="w-[--radix-popover-trigger-width] border border-blue-100 bg-blue-50/85 p-0 backdrop-blur-md dark:border-blue-900 dark:bg-slate-950/85">
+          <Command shouldFilter={false} className="bg-transparent">
             <CommandInput
               placeholder="Escribe el nombre..."
               value={search}
               onValueChange={setSearch}
               aria-label={`Buscar ${label}`}
               aria-describedby={`${label}-hint`}
+              className="text-blue-900 placeholder:text-blue-400 dark:text-blue-50"
             />
             <span id={`${label}-hint`} className="sr-only">
               Escribe al menos {MIN_SEARCH_LENGTH} caracteres para buscar
@@ -178,6 +179,7 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
                       key={artist.id}
                       value={artist.id}
                       onSelect={() => handleSelect(artist)}
+                      className="data-[selected=true]:bg-blue-600/15 data-[selected=true]:text-blue-600 dark:data-[selected=true]:bg-blue-900/40 dark:data-[selected=true]:text-white"
                     >
                       <div className="flex items-center gap-3">
                         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary">
@@ -191,7 +193,9 @@ export function ArtistCombobox({ label, value, onSelect }: ArtistComboboxProps) 
                             <User className="h-4 w-4 text-muted-foreground" />
                           )}
                         </div>
-                        <span>{artist.name}</span>
+                        <span className="text-blue-950/80 font-medium dark:text-blue-50">
+                          {artist.name}
+                        </span>
                       </div>
                       <Check
                         className={cn(

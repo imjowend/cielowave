@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
+  darkMode: "class",
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -41,8 +42,6 @@ const config: Config = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
-        "artist-a": "hsl(var(--artist-a))",
-        "artist-b": "hsl(var(--artist-b))",
       },
       borderRadius: {
         lg: "var(--radius)",
