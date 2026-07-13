@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     const backendUrl =
       process.env.NODE_ENV === "development"
         ? "http://localhost:8080"
-        : "http://129.159.179.42:8080";
+        : "http://132.145.131.49:8080";
     return [
       {
         source: "/api/:path*",
