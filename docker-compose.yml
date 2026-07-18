@@ -5,7 +5,16 @@ services:
       dockerfile: Dockerfile
     container_name: cielowave-api
     restart: unless-stopped
-    ports:
-      - "8083:8080"
     env_file:
       - ./backend/.env
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cielowave.rule=Host(`cielowave-api.joaquinvasquez.com`)"
+      - "traefik.http.routers.cielowave.entrypoints=websecure"
+      - "traefik.http.routers.cielowave.tls.certresolver=cloudflare"
+      - "traefik.http.services.cielowave.loadbalancer.server.port=8080"
+networks:
+  web:
+    external: true
