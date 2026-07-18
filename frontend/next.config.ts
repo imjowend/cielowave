@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     const backendUrl =
       process.env.NODE_ENV === "development"
         ? "http://localhost:8080"
-        : "http://132.145.131.49:8080";
+        : "https://cielowave-api.joaquinvasquez.com";
     return [
       {
         source: "/api/:path*",
