@@ -15,6 +15,9 @@ services:
       - "traefik.http.routers.cielowave.entrypoints=websecure"
       - "traefik.http.routers.cielowave.tls.certresolver=cloudflare"
       - "traefik.http.services.cielowave.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.cielowave-ratelimit.ratelimit.average=10"
+      - "traefik.http.middlewares.cielowave-ratelimit.ratelimit.burst=20"
+      - "traefik.http.routers.cielowave.middlewares=cielowave-ratelimit"
 networks:
   web:
     external: true
