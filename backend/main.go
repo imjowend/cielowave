@@ -60,26 +60,12 @@ func main() {
 	mux.HandleFunc("GET /api/auth/tidal/login", handleTidalLogin(userClient))
 	mux.HandleFunc("GET /api/auth/tidal/callback", handleTidalCallback(userClient))
 
-	// Inicia el servidor HTTP envolviéndolo en el middleware CORS.
+	// Inicia el servidor HTTP. CORS y preflight OPTIONS los maneja Traefik (middleware headers).
 	slog.Info("Servidor de CieloWave backend escuchando", "port", port)
-	if err := http.ListenAndServe(":"+port, corsMiddleware(mux)); err != nil {
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		slog.Error("error crítico del servidor", "err", err)
 		os.Exit(1)
 	}
-}
-
-// corsMiddleware agrega las cabeceras CORS de control de acceso para peticiones cruzadas desde el frontend.
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // writeJSON envía una respuesta formateada en JSON con su correspondiente código HTTP.
