@@ -1,15 +1,3 @@
-# Go
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-vendor/
-backend/backend
-backend/cielowave-api
-
 # Node.js
 node_modules/
 npm-debug.log*
@@ -31,9 +19,3 @@ Thumbs.db
 
 # Assistant configurations
 .claude/
-
-#IntelliJ
-.idea/
-
-#Docs
-docs/

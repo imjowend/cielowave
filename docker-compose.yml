@@ -17,7 +17,10 @@ services:
       - "traefik.http.services.cielowave.loadbalancer.server.port=8080"
       - "traefik.http.middlewares.cielowave-ratelimit.ratelimit.average=10"
       - "traefik.http.middlewares.cielowave-ratelimit.ratelimit.burst=20"
-      - "traefik.http.routers.cielowave.middlewares=cielowave-ratelimit"
+      - "traefik.http.middlewares.cielowave-cors.headers.accesscontrolalloworiginlist=https://cielowave.vercel.app"
+      - "traefik.http.middlewares.cielowave-cors.headers.accesscontrolallowmethods=GET,POST,OPTIONS"
+      - "traefik.http.middlewares.cielowave-cors.headers.accesscontrolallowheaders=Content-Type,Authorization"
+      - "traefik.http.routers.cielowave.middlewares=cielowave-cors,cielowave-ratelimit"
 networks:
   web:
     external: true
