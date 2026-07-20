@@ -1,77 +1,74 @@
 # CieloWave — Backend
 
-API HTTP en Go que conecta con la API de Tidal para buscar artistas, mezclar tracks y guardar playlists en cuentas de usuario vía OAuth2 PKCE.
+API HTTP en Go que integra la API de Tidal. Busca artistas y su catálogo de tracks
+usando *Client Credentials*, mezcla e intercala las canciones de dos artistas en una
+playlist, y permite guardar esa playlist en la cuenta Tidal del usuario mediante un
+flujo OAuth2 PKCE. Las playlists generadas y los estados OAuth se mantienen en un
+store en memoria (temporal).
 
-## Stack
+## Requisitos
 
-- **Go 1.26** — stdlib únicamente (`net/http`, `log/slog`)
-- **godotenv** — carga de variables de entorno desde `.env`
-- Integración con **Tidal API** (client credentials + OAuth2 PKCE)
-
-## Estructura
-
-```
-main.go                     → Entrypoint, rutas HTTP, handlers
-internal/
-  tidal/
-    client.go               → TidalClient (búsqueda, tracks) — client credentials
-    userclient.go           → UserClient (OAuth2 PKCE, guardar playlists)
-    models.go               → Tipos: Artist, Track, PlaylistRequest, etc.
-    store.go                → Store en memoria para playlists y estados OAuth
-  playlist/
-    mixer.go                → MixPlaylist: mezcla y desduplicación de tracks
-```
-
-## Endpoints
-
-| Método | Ruta                          | Descripción                              |
-|--------|-------------------------------|------------------------------------------|
-| GET    | `/health`                     | Health check                             |
-| GET    | `/api/artists?q=`             | Buscar artistas en Tidal                 |
-| GET    | `/api/artists/{id}/tracks`    | Obtener tracks de un artista             |
-| POST   | `/api/playlist`               | Crear playlist mezclada (no guardada)    |
-| POST   | `/api/playlist/save`          | Guardar playlist en memoria temporalmente|
-| GET    | `/api/auth/tidal/login`       | Iniciar OAuth2 PKCE con Tidal            |
-| GET    | `/api/auth/tidal/callback`    | Callback OAuth2 — crea playlist en Tidal |
+- **Go 1.26**
+- Credenciales de una app de desarrollador de Tidal (Client ID + Secret)
 
 ## Variables de entorno
 
-Crea un archivo `.env` en la raíz del backend:
+El backend carga un `.env` si existe (vía `godotenv`) y lee estas variables:
 
-```env
-TIDAL_CLIENT_ID=tu_client_id
-TIDAL_CLIENT_SECRET=tu_client_secret
-TIDAL_REDIRECT_URI=http://localhost:8080/api/auth/tidal/callback
-PORT=8080                   # opcional, default 8080
-```
+| Variable              | Requerida | Propósito                                                        |
+|-----------------------|-----------|------------------------------------------------------------------|
+| `TIDAL_CLIENT_ID`     | sí        | Client ID de la app de Tidal (búsqueda y catálogo)               |
+| `TIDAL_CLIENT_SECRET` | sí        | Client Secret de la app de Tidal                                 |
+| `TIDAL_REDIRECT_URI`  | sí        | URI de callback del flujo OAuth2 PKCE (el server aborta si falta)|
+| `PORT`                | no        | Puerto HTTP de escucha (default `8080`)                          |
 
 ## Correr en local
 
 ```bash
-go run main.go
+cd backend
+cp .env.example .env   # completar con credenciales reales
+go run .
 # Servidor en http://localhost:8080
 ```
 
-## Tests
+## Buildear / deployar
 
 ```bash
-# Correr todos los tests
-go test ./...
-
-# Con verbose output
-go test -v ./...
-
-# Solo un paquete
-go test ./internal/playlist/...
-go test ./internal/tidal/...
-go test .                   # tests del paquete main
+docker compose up -d --build   # desde la raíz del repo
 ```
 
-Los tests usan exclusivamente `net/http/httptest` — no requieren credenciales reales ni servidor externo. Los `UserClient` y `TidalClient` exponen helpers (`OverrideAuthURL`, `OverrideAPIBase`, `NewTidalClientForTest`) para inyectar servidores mock en tests.
+En producción el enrutamiento (TLS, CORS, rate-limit) lo maneja **Traefik** vía labels
+en `docker-compose.yml`; el backend solo expone HTTP plano en el puerto 8080.
 
-### Cobertura
+## Integración externa
 
-```bash
-go test -cover ./...
-go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out
+- **Tidal API** — dos modos de acceso:
+  - *Client Credentials*: búsqueda de artistas y obtención de tracks de catálogo.
+  - *OAuth2 PKCE (user token)*: login del usuario, creación de la playlist en su
+    cuenta y alta de tracks.
+
+## Endpoints
+
+| Método | Ruta                        | Descripción                                   |
+|--------|-----------------------------|-----------------------------------------------|
+| GET    | `/health`                   | Health check                                  |
+| GET    | `/api/artists?q=`           | Buscar artistas en Tidal (top 5 por prefijo)  |
+| GET    | `/api/artists/{id}/tracks`  | Tracks de catálogo de un artista              |
+| POST   | `/api/playlist`             | Crear playlist mezclada (no persistida)       |
+| POST   | `/api/playlist/save`        | Guardar playlist en memoria y devolver un ID  |
+| GET    | `/api/auth/tidal/login`     | Iniciar OAuth2 PKCE con Tidal                 |
+| GET    | `/api/auth/tidal/callback`  | Callback OAuth2 — crea la playlist en Tidal   |
+
+## Estructura
+
+```
+main.go                  → entrypoint, rutas HTTP y handlers
+internal/
+  tidal/
+    client.go            → TidalClient (búsqueda y tracks, Client Credentials)
+    userclient.go        → UserClient (OAuth2 PKCE, guardar playlists)
+    store.go             → store en memoria (playlists + estados OAuth)
+    models.go            → tipos (Artist, Track, PlaylistRequest, ...)
+  playlist/
+    mixer.go             → MixPlaylist: intercala y desduplica tracks
 ```

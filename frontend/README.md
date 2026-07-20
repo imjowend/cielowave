@@ -1,23 +1,18 @@
 # CieloWave — Frontend
 
-Next.js 15 app que permite mezclar playlists de dos artistas de Tidal y guardarlas en tu cuenta.
+App en Next.js 15 (App Router) para mezclar las discografías de dos artistas de Tidal
+y guardar la playlist resultante en tu cuenta. Consume la API del backend bajo `/api`.
 
-## Stack
+## Requisitos
 
-- **Next.js 15** (App Router) + **React 19**
-- **TypeScript**
-- **Tailwind CSS** + **Radix UI** (componentes accesibles)
-- **pnpm** como gestor de paquetes
+- **Node.js 18.18+** (mínimo requerido por Next.js 15)
+  <!-- TODO: confirmar versión exacta; no hay campo `engines` en package.json -->
+- **pnpm** (hay `pnpm-lock.yaml` en el repo)
 
-## Estructura
+## Variables de entorno
 
-```
-app/          → Rutas (App Router)
-components/   → UI: PlaylistMixer, ArtistCombobox, TrackList, QR, Header, Footer
-hooks/        → useDebounce
-lib/          → utils (cn helper)
-types/        → Tipos compartidos
-```
+No requiere variables de entorno. El destino del backend está resuelto en
+`next.config.ts` según el entorno (ver siguiente sección).
 
 ## Correr en local
 
@@ -26,21 +21,27 @@ pnpm install
 pnpm dev        # http://localhost:3000
 ```
 
-> Requiere que el backend esté corriendo en `http://localhost:8080` (o configurar `NEXT_PUBLIC_API_URL`).
+Requiere el backend corriendo en `http://localhost:8080`.
 
-## Scripts
+| Comando       | Descripción              |
+|---------------|--------------------------|
+| `pnpm dev`    | Servidor de desarrollo   |
+| `pnpm build`  | Build de producción      |
+| `pnpm start`  | Servidor de producción   |
+| `pnpm lint`   | Linter (ESLint)          |
 
-| Comando        | Descripción                   |
-|----------------|-------------------------------|
-| `pnpm dev`     | Servidor de desarrollo        |
-| `pnpm build`   | Build de producción           |
-| `pnpm start`   | Servidor de producción        |
-| `pnpm lint`    | Linter (ESLint)               |
+## Cómo pega al backend
 
-## Tests
+`next.config.ts` define un **rewrite** de `/api/:path*` hacia el backend, con destino
+según el entorno:
 
-El frontend no tiene suite de tests configurada actualmente. Para agregar tests se recomienda [Vitest](https://vitest.dev/) + [Testing Library](https://testing-library.com/).
+- desarrollo (`NODE_ENV=development`) → `http://localhost:8080`
+- producción → `https://cielowave-api.joaquinvasquez.com`
+
+El frontend siempre llama a rutas relativas `/api/...`; Next.js las proxea al backend
+que corresponda, así que no hay CORS del lado del cliente.
 
 ## Deploy
 
-El frontend está deployado en **Vercel**: [cielowave.vercel.app](https://cielowave.vercel.app)
+Deployado en **Vercel**: `cielowave.vercel.app`. El destino de producción del rewrite
+está hardcodeado en `next.config.ts` (no depende de una env var de build).
